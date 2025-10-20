@@ -417,6 +417,8 @@ class PokemonGame(BaseGame):
             return self._handle_take_coins(player_id, action_data)
         elif action == "reserve_card":
             return self._handle_reserve_card(player_id, action_data)
+        elif action == "buy_card":
+            return self._handle_buy_card(player_id, action_data)
         else:
             return {"success": False, "message": f"不支持的操作: {action}"}
     
@@ -515,8 +517,8 @@ class PokemonGame(BaseGame):
         # 规则1: 拿取2个相同颜色硬币 - 要求该种颜色硬币>4个
         if unique_colors == 1 and total_coins == 2:
             color = list(coins_to_take.keys())[0]
-            if current_coins[color] <= 4:
-                return {"valid": False, "message": f"{color}硬币库存不足5个，不能拿取2个同色硬币"}
+            if current_coins[color] < 4:
+                return {"valid": False, "message": f"{color}硬币库存不足4个，不能拿取2个同色硬币"}
             return {"valid": True, "message": ""}
         
         # 规则2: 拿取2个不同颜色硬币 - 只剩两种颜色时
@@ -840,3 +842,299 @@ class PokemonGame(BaseGame):
         except Exception as e:
             print(f"获取玩家视角时出错: {e}")
             return self.get_public_info()
+    
+    def _handle_buy_card(self, player_id: str, action_data: Dict) -> Dict:
+        """处理购买卡牌操作"""
+        try:
+            # 检查游戏状态
+            if self.status != GameStatus.PLAYING:
+                return {"success": False, "message": "游戏未开始"}
+            
+            # 检查是否轮到该玩家
+            current_player = self.get_current_player()
+            if not current_player or current_player.user_id != player_id:
+                return {"success": False, "message": "不是你的回合"}
+            
+            # 获取购买类型和目标
+            buy_type = action_data.get("buy_type")  # "display" 或 "reserved"
+            
+            if buy_type == "display":
+                card_id = action_data.get("card_id")
+                if card_id is None:
+                    return {"success": False, "message": "购买展示卡牌需要指定card_id"}
+                return self._buy_display_card(player_id, card_id)
+            elif buy_type == "reserved":
+                card_index = action_data.get("card_index")
+                if card_index is None:
+                    return {"success": False, "message": "购买预购卡牌需要指定card_index"}
+                return self._buy_reserved_card(player_id, card_index)
+            else:
+                return {"success": False, "message": "无效的购买类型，支持: display, reserved"}
+                
+        except Exception as e:
+            return {"success": False, "message": f"购买卡牌时出错: {e}"}
+    
+    def _buy_display_card(self, player_id: str, card_id: int) -> Dict:
+        """购买展示区的卡牌"""
+        try:
+            # 查找目标卡牌
+            target_card = None
+            card_deck_type = None
+            
+            display_cards = self.game_state["public_info"]["display_cards"]
+            for deck_type, cards in display_cards.items():
+                for card in cards:
+                    if card["id"] == card_id:
+                        target_card = card
+                        card_deck_type = deck_type
+                        break
+                if target_card:
+                    break
+            
+            if not target_card:
+                return {"success": False, "message": f"未找到ID为{card_id}的展示卡牌"}
+            
+            # 计算购买成本和检查是否能够支付
+            cost_result = self._calculate_card_cost(player_id, target_card)
+            if not cost_result["can_afford"]:
+                return {"success": False, "message": cost_result["message"]}
+            
+            # 执行支付
+            payment_result = self._pay_for_card(player_id, cost_result["final_cost"])
+            if not payment_result["success"]:
+                return {"success": False, "message": payment_result["message"]}
+            
+            # 从展示区移除卡牌
+            display_cards[card_deck_type].remove(target_card)
+            
+            # 补充新卡牌到展示区
+            self._refill_display_card(card_deck_type)
+            
+            # 将卡牌添加到玩家手牌
+            player_data = self.game_state["player_data"][player_id]
+            player_data["cards"].append(target_card)
+            
+            # 切换到下一个玩家
+            self.next_player()
+            self.game_state["turn_count"] += 1
+            
+            # 记录操作
+            self.game_state["last_action"] = {
+                "player_id": player_id,
+                "action": "buy_display_card",
+                "card": target_card,
+                "cost": cost_result["final_cost"]
+            }
+            
+            return {
+                "success": True,
+                "message": f"成功购买卡牌: {target_card.get('name', '未知卡牌')}",
+                "cost": cost_result["final_cost"],
+                "discounts": cost_result["discounts"]
+            }
+            
+        except Exception as e:
+            return {"success": False, "message": f"购买展示卡牌时出错: {e}"}
+    
+    def _buy_reserved_card(self, player_id: str, card_index: int) -> Dict:
+        """购买自己预购区的卡牌"""
+        try:
+            player_data = self.game_state["player_data"][player_id]
+            reserved_cards = player_data["reserved_cards"]
+            
+            # 检查索引是否有效
+            if card_index < 0 or card_index >= len(reserved_cards):
+                return {"success": False, "message": f"无效的预购卡牌索引: {card_index}"}
+            
+            reserved_card_info = reserved_cards[card_index]
+            target_card = reserved_card_info["card"]
+            
+            # 计算购买成本和检查是否能够支付
+            cost_result = self._calculate_card_cost(player_id, target_card)
+            if not cost_result["can_afford"]:
+                return {"success": False, "message": cost_result["message"]}
+            
+            # 执行支付
+            payment_result = self._pay_for_card(player_id, cost_result["final_cost"])
+            if not payment_result["success"]:
+                return {"success": False, "message": payment_result["message"]}
+            
+            # 从预购区移除卡牌
+            reserved_cards.pop(card_index)
+            
+            # 将卡牌添加到玩家手牌
+            player_data["cards"].append(target_card)
+            
+            # 切换到下一个玩家
+            self.next_player()
+            self.game_state["turn_count"] += 1
+            
+            # 记录操作
+            self.game_state["last_action"] = {
+                "player_id": player_id,
+                "action": "buy_reserved_card",
+                "card": target_card,
+                "cost": cost_result["final_cost"]
+            }
+            
+            return {
+                "success": True,
+                "message": f"成功购买预购卡牌: {target_card.get('name', '未知卡牌')}",
+                "cost": cost_result["final_cost"],
+                "discounts": cost_result["discounts"]
+            }
+            
+        except Exception as e:
+            return {"success": False, "message": f"购买预购卡牌时出错: {e}"}
+    
+    def _calculate_card_cost(self, player_id: str, card: Dict) -> Dict:
+        """计算卡牌购买成本，包括玩家卡牌的抵扣"""
+        try:
+            # 获取卡牌需要的金币
+            required_coins = {
+                "red": card.get("need_red", 0),
+                "pink": card.get("need_pink", 0),
+                "blue": card.get("need_blue", 0),
+                "yellow": card.get("need_yellow", 0),
+                "black": card.get("need_black", 0),
+                "purple": card.get("need_master", 0)  # master对应紫色金币
+            }
+            
+            # 获取玩家拥有的金币
+            player_data = self.game_state["player_data"][player_id]
+            player_coins = player_data["coins"].copy()
+            
+            # 计算玩家卡牌提供的抵扣
+            discounts = self._calculate_card_discounts(player_id)
+            
+            # 应用抵扣到需求中
+            final_cost = required_coins.copy()
+            applied_discounts = {}
+            
+            # 颜色代码映射
+            color_map = {1: "red", 2: "pink", 3: "blue", 4: "yellow", 5: "black"}
+            
+            for color_code, discount_amount in discounts.items():
+                if color_code in color_map:
+                    color = color_map[color_code]
+                    if final_cost[color] > 0:
+                        reduction = min(final_cost[color], discount_amount)
+                        final_cost[color] -= reduction
+                        applied_discounts[color] = applied_discounts.get(color, 0) + reduction
+            
+            # 检查是否能够支付剩余成本
+            can_afford = True
+            shortage = {}
+            
+            for color, needed in final_cost.items():
+                if needed > 0:
+                    available = player_coins[color]
+                    # 紫色金币可以作为任意颜色使用
+                    if color != "purple" and available < needed:
+                        purple_needed = needed - available
+                        if player_coins["purple"] >= purple_needed:
+                            # 可以用紫色金币补足
+                            player_coins["purple"] -= purple_needed
+                            available = needed
+                        else:
+                            # 即使用紫色金币也不够
+                            shortage[color] = needed - available - player_coins["purple"]
+                            can_afford = False
+                    elif available < needed:
+                        shortage[color] = needed - available
+                        can_afford = False
+            
+            message = ""
+            if not can_afford:
+                shortage_desc = ", ".join([f"{color}缺少{amount}" for color, amount in shortage.items()])
+                message = f"金币不足: {shortage_desc}"
+            
+            return {
+                "can_afford": can_afford,
+                "message": message,
+                "original_cost": required_coins,
+                "final_cost": final_cost,
+                "discounts": applied_discounts,
+                "total_discount": sum(applied_discounts.values())
+            }
+            
+        except Exception as e:
+            return {
+                "can_afford": False,
+                "message": f"计算卡牌成本时出错: {e}",
+                "original_cost": {},
+                "final_cost": {},
+                "discounts": {},
+                "total_discount": 0
+            }
+    
+    def _calculate_card_discounts(self, player_id: str) -> Dict:
+        """计算玩家拥有的卡牌提供的金币抵扣"""
+        player_data = self.game_state["player_data"][player_id]
+        player_cards = player_data["cards"]
+        
+        discounts = {}  # {color_code: total_discount_amount}
+        
+        for card in player_cards:
+            reward_color_code = card.get("reward_color_code")
+            reward_count = card.get("reward_count", 0)
+            
+            if reward_color_code and reward_count > 0:
+                discounts[reward_color_code] = discounts.get(reward_color_code, 0) + reward_count
+        
+        return discounts
+    
+    def _pay_for_card(self, player_id: str, cost: Dict) -> Dict:
+        """执行卡牌购买的支付"""
+        try:
+            player_data = self.game_state["player_data"][player_id]
+            player_coins = player_data["coins"]
+            public_coins = self.game_state["public_info"]["coins"]
+            
+            # 记录支付前的金币状态
+            original_coins = player_coins.copy()
+            
+            # 记录实际支付的金币（用于返回金币池）
+            coins_paid = {"red": 0, "pink": 0, "blue": 0, "yellow": 0, "black": 0, "purple": 0}
+            
+            # 执行支付
+            for color, amount in cost.items():
+                if amount > 0:
+                    if color == "purple":
+                        # 直接扣除紫色金币
+                        if player_coins["purple"] < amount:
+                            return {"success": False, "message": f"紫色金币不足，需要{amount}个，只有{player_coins['purple']}个"}
+                        player_coins["purple"] -= amount
+                        coins_paid["purple"] += amount
+                    else:
+                        # 优先使用对应颜色的金币
+                        available = player_coins[color]
+                        if available >= amount:
+                            player_coins[color] -= amount
+                            coins_paid[color] += amount
+                        else:
+                            # 使用对应颜色的金币
+                            if available > 0:
+                                player_coins[color] = 0
+                                coins_paid[color] += available
+                            
+                            # 剩余部分用紫色金币补足
+                            purple_needed = amount - available
+                            if player_coins["purple"] < purple_needed:
+                                return {"success": False, "message": f"金币不足，{color}需要{amount}个，紫色金币不足{purple_needed}个"}
+                            player_coins["purple"] -= purple_needed
+                            coins_paid["purple"] += purple_needed
+            
+            # 将支付的金币返回到金币池
+            for color, amount in coins_paid.items():
+                if amount > 0:
+                    public_coins[color] += amount
+            
+            return {"success": True, "message": "支付成功", "coins_paid": coins_paid}
+            
+        except Exception as e:
+            return {"success": False, "message": f"支付时出错: {e}"}
+    
+    def next_player(self):
+        """切换到下一个玩家"""
+        self.current_player_index = (self.current_player_index + 1) % len(self.players)

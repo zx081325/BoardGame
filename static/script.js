@@ -57,6 +57,33 @@ class GameClient {
                 const cardId = parseInt(e.target.dataset.cardId);
                 this.reserveDisplayCard(cardId);
             }
+            
+            // 预留展示卡牌按钮事件
+            if (e.target.classList.contains('reserve-card-button')) {
+                const cardId = parseInt(e.target.dataset.cardId);
+                this.reserveDisplayCard(cardId);
+            }
+            
+            // 购买展示卡牌按钮事件
+            if (e.target.classList.contains('buy-card-button')) {
+                const cardId = parseInt(e.target.dataset.cardId);
+                const source = e.target.dataset.source || 'display';
+                this.buyCard(cardId, source);
+            }
+            
+            // 购买预购卡牌按钮事件
+            if (e.target.classList.contains('buy-reserved-button')) {
+                const cardIndexStr = e.target.dataset.cardIndex;
+                const cardIndex = parseInt(cardIndexStr);
+                const source = e.target.dataset.source || 'reserved';
+                
+                if (isNaN(cardIndex) || cardIndex < 0) {
+                    this.showMessage('无效的卡牌索引', 'error');
+                    return;
+                }
+                
+                this.buyCard(cardIndex, source);
+            }
         });
         
         // 回车键登录
@@ -507,7 +534,7 @@ class GameClient {
             game_action: "reserve_card",
             action_data: {
                 type: "display",
-                target: cardId
+                card_id: cardId
             }
         });
     }
@@ -524,8 +551,42 @@ class GameClient {
             game_action: "reserve_card",
             action_data: {
                 type: "deck_top",
-                target: deckType
+                deck_type: deckType
             }
+        });
+    }
+    
+    buyCard(cardId, source) {
+        console.log('DEBUG: buyCard called with cardId:', cardId, 'source:', source);
+        
+        if (!this.currentRoom || this.currentRoom.game_type !== 'pokemon_game') {
+            this.showMessage('只能在宝可梦游戏中购买卡牌', 'error');
+            return;
+        }
+        
+        console.log('DEBUG: Current room:', this.currentRoom);
+        
+        // 发送购买卡牌请求
+        const actionData = {
+            buy_type: source // 'display' 或 'reserved'
+        };
+        
+        if (source === 'display') {
+            actionData.card_id = cardId;
+        } else if (source === 'reserved') {
+            actionData.card_index = cardId; // 对于预购卡牌，这里应该是索引
+        }
+        
+        console.log('DEBUG: Sending buy card message:', {
+            action: "game_action",
+            game_action: "buy_card",
+            action_data: actionData
+        });
+        
+        this.sendMessage({
+            action: "game_action",
+            game_action: "buy_card",
+            action_data: actionData
         });
     }
     
@@ -720,18 +781,29 @@ class GameClient {
     updateGameStatus() {
         const statusText = document.getElementById('gameStatusText');
         const turnIndicator = document.getElementById('currentTurnIndicator');
+        const newGameButton = document.getElementById('newGameButton');
         
         if (this.currentRoom.status === 'waiting') {
-            statusText.textContent = '等待玩家加入...';
-            turnIndicator.textContent = '';
+            const playerCount = this.currentRoom.players.length;
+            if (playerCount < 2) {
+                statusText.textContent = `等待玩家加入... (${playerCount}/2)`;
+                turnIndicator.textContent = '';
+                newGameButton.style.display = 'none';
+            } else {
+                statusText.textContent = '准备就绪，可以开始游戏！';
+                turnIndicator.textContent = '';
+                newGameButton.style.display = 'block';
+                newGameButton.textContent = '开始游戏';
+            }
         } else if (this.currentRoom.status === 'playing') {
             statusText.textContent = '游戏进行中';
             const currentPlayer = this.currentRoom.players.find(p => p.id === this.currentRoom.current_player);
             if (currentPlayer) {
                 turnIndicator.textContent = `轮到 ${currentPlayer.name}`;
             }
+            newGameButton.style.display = 'none';
         } else if (this.currentRoom.status === 'finished') {
-            if (this.currentRoom.game_state.winner) {
+            if (this.currentRoom.game_state && this.currentRoom.game_state.winner) {
                 const winner = this.currentRoom.players.find(p => 
                     (p === this.currentRoom.players[0] && this.currentRoom.game_state.winner === 'X') ||
                     (p === this.currentRoom.players[1] && this.currentRoom.game_state.winner === 'O')
@@ -740,15 +812,21 @@ class GameClient {
                 if (this.currentRoom.game_type === 'reverse_tic_tac_toe') {
                     // 反井格棋：显示获胜者（没有连成线的玩家）
                     statusText.textContent = `游戏结束 - ${winner ? winner.name : '未知玩家'} 获胜！（避免连线成功）`;
+                } else if (this.currentRoom.game_type === 'pokemon_game') {
+                    // 宝可梦游戏
+                    statusText.textContent = `游戏结束 - ${winner ? winner.name : '未知玩家'} 获胜！`;
                 } else {
                     // 普通井字棋
                     statusText.textContent = `游戏结束 - ${winner ? winner.name : '未知玩家'} 获胜！`;
                 }
-            } else if (this.currentRoom.game_state.is_draw) {
+            } else if (this.currentRoom.game_state && this.currentRoom.game_state.is_draw) {
                 statusText.textContent = '游戏结束 - 平局！';
+            } else {
+                statusText.textContent = '游戏结束';
             }
             turnIndicator.textContent = '';
-            document.getElementById('newGameButton').style.display = 'block';
+            newGameButton.style.display = 'block';
+            newGameButton.textContent = '新游戏';
         }
     }
     
@@ -793,6 +871,12 @@ class GameClient {
     
     updatePokemonGameBoard() {
         if (!this.currentRoom || !this.currentRoom.game_state) return;
+        
+        // 只在游戏开始后才显示游戏内容
+        if (this.currentRoom.status !== 'playing') {
+            this.hideGameContent();
+            return;
+        }
         
         const gameState = this.currentRoom.game_state;
         const publicInfo = gameState.public_info;
@@ -864,16 +948,24 @@ class GameClient {
                 
                 // 检查是否可以预购（非梦幻、传说卡牌）
                 const canReserveCard = canReserve && !['梦幻', '传说'].includes(card.level);
+                const canBuyCard = isCurrentPlayerTurn && isPlaying;
+                
                 if (canReserveCard) {
                     cardElement.classList.add('reservable');
                 } else {
                     cardElement.classList.add('not-reservable');
                 }
                 
+                // 构建卡牌成本显示（包含抵扣信息）
+                const costDisplay = this.generateCostDisplay(card);
+                
                 cardElement.innerHTML = `
                     <div class="card-name">${card.name}</div>
                     <div class="card-level">等级: ${card.level}</div>
-                    <div class="card-cost">分数: ${card.points}</div>
+                    <div class="card-points">分数: ${card.points}</div>
+                    ${costDisplay}
+                    ${canBuyCard ? `<button class="buy-card-button" data-card-id="${card.id}" data-source="display">购买</button>` : ''}
+                    ${canReserveCard ? `<button class="reserve-card-button" data-card-id="${card.id}" data-source="display">预留</button>` : ''}
                 `;
                 
                 container.appendChild(cardElement);
@@ -889,6 +981,8 @@ class GameClient {
     updatePlayersInfo(playerData) {
         if (!playerData) return;
         
+        console.log('updatePlayersInfo called with playerData:', playerData);
+        
         const players = this.currentRoom.players;
         
         players.forEach((player, index) => {
@@ -896,6 +990,9 @@ class GameClient {
             const data = playerData[player.user_id];
             
             if (!data) return;
+            
+            console.log(`Player ${playerIndex} (${player.user_id}) data:`, data);
+            console.log(`Player ${playerIndex} owned_cards:`, data.owned_cards);
             
             // 更新玩家硬币
             document.getElementById(`p${playerIndex}RedCoins`).textContent = data.coins.red || 0;
@@ -914,25 +1011,82 @@ class GameClient {
             if (reservedContainer) {
                 reservedContainer.innerHTML = '';
                 
-                reservedCards.forEach(reservedCard => {
+                reservedCards.forEach((reservedCard, index) => {
                     const cardElement = document.createElement('div');
                     cardElement.className = 'reserved-card-item';
                     
+                    const isCurrentPlayer = player.user_id === this.currentUser.id;
+                    const isCurrentPlayerTurn = this.currentRoom.current_player === this.getCurrentPlayerId();
+                    const isPlaying = this.currentRoom.status === 'playing';
+                    const canBuyCard = isCurrentPlayer && isCurrentPlayerTurn && isPlaying;
+                    
                     if (!reservedCard.visible_to_all) {
                         cardElement.classList.add('private');
-                        if (player.user_id === this.currentUser.id) {
+                        if (isCurrentPlayer) {
                             // 当前玩家可以看到自己的隐私卡牌
-                            cardElement.textContent = `${reservedCard.card.name} (隐私)`;
+                            const card = reservedCard.card;
+                            const costDisplay = this.generateCostDisplay(card);
+                            
+                            cardElement.innerHTML = `
+                                <div class="card-name">${card.name} (隐私)</div>
+                                ${costDisplay}
+                                ${canBuyCard ? `<button class="buy-reserved-button" data-card-index="${index}" data-source="reserved">购买</button>` : ''}
+                            `;
                         } else {
                             // 其他玩家看不到隐私卡牌详情
                             cardElement.textContent = '隐藏卡牌';
                         }
                     } else {
                         // 对所有人可见的卡牌
-                        cardElement.textContent = reservedCard.card.name;
+                        const card = reservedCard.card;
+                        const costDisplay = isCurrentPlayer ? this.generateCostDisplay(card) : this.generateBasicCostDisplay(card);
+                        
+                        cardElement.innerHTML = `
+                            <div class="card-name">${card.name}</div>
+                            ${costDisplay}
+                            ${canBuyCard ? `<button class="buy-reserved-button" data-card-index="${index}" data-source="reserved">购买</button>` : ''}
+                        `;
                     }
                     
                     reservedContainer.appendChild(cardElement);
+                });
+            }
+            
+            // 更新玩家拥有的卡牌区域
+            const ownedCards = data.owned_cards || data.cards || [];
+            const ownedCount = ownedCards.length;
+            const totalPoints = ownedCards.reduce((sum, card) => sum + (card.points || 0), 0);
+            
+            document.getElementById(`p${playerIndex}OwnedCount`).textContent = ownedCount;
+            document.getElementById(`p${playerIndex}Points`).textContent = totalPoints;
+            
+            const ownedContainer = document.getElementById(`p${playerIndex}OwnedCards`);
+            if (ownedContainer) {
+                ownedContainer.innerHTML = '';
+                
+                ownedCards.forEach(card => {
+                    const cardElement = document.createElement('div');
+                    cardElement.className = 'owned-card';
+                    
+                    // 设置卡牌奖励颜色的背景
+                    const bonusColors = {
+                        'red': '#ff4444',
+                        'pink': '#ff69b4',
+                        'blue': '#4169e1',
+                        'yellow': '#ffd700',
+                        'black': '#333333'
+                    };
+                    
+                    cardElement.innerHTML = `
+                        <div class="card-name">${card.name}</div>
+                        <div class="card-level">${card.level}</div>
+                        <div class="card-points">${card.points}</div>
+                        <div class="card-bonus" style="background-color: ${bonusColors[card.bonus_type] || '#ccc'}">
+                            ${card.bonus_type ? card.bonus_type.charAt(0).toUpperCase() : ''}
+                        </div>
+                    `;
+                    
+                    ownedContainer.appendChild(cardElement);
                 });
             }
         });
@@ -954,6 +1108,166 @@ class GameClient {
         });
     }
     
+    // 计算当前玩家的卡牌抵扣
+    calculatePlayerDiscounts() {
+        if (!this.currentRoom || !this.currentRoom.player_data) {
+            return {};
+        }
+        
+        const currentPlayerId = this.getCurrentPlayerId();
+        const playerData = this.currentRoom.player_data[currentPlayerId];
+        
+        if (!playerData || !playerData.cards) {
+            return {};
+        }
+        
+        const discounts = {};
+        const colorMap = {1: "red", 2: "pink", 3: "blue", 4: "yellow", 5: "black"};
+        
+        playerData.cards.forEach(card => {
+            const rewardColorCode = card.reward_color_code;
+            const rewardCount = card.reward_count || 0;
+            
+            if (rewardColorCode && rewardCount > 0 && colorMap[rewardColorCode]) {
+                const color = colorMap[rewardColorCode];
+                discounts[color] = (discounts[color] || 0) + rewardCount;
+            }
+        });
+        
+        return discounts;
+    }
+
+    // 计算卡牌的实际成本（考虑抵扣）
+    calculateActualCost(card) {
+        const originalCost = {
+            red: card.need_red || 0,
+            pink: card.need_pink || 0,
+            blue: card.need_blue || 0,
+            yellow: card.need_yellow || 0,
+            black: card.need_black || 0,
+            master: card.need_master || 0
+        };
+        
+        const discounts = this.calculatePlayerDiscounts();
+        const actualCost = {...originalCost};
+        const appliedDiscounts = {};
+        
+        // 应用抵扣
+        for (const color in discounts) {
+            if (actualCost[color] > 0) {
+                const reduction = Math.min(actualCost[color], discounts[color]);
+                actualCost[color] -= reduction;
+                if (reduction > 0) {
+                    appliedDiscounts[color] = reduction;
+                }
+            }
+        }
+        
+        return {
+            originalCost,
+            actualCost,
+            appliedDiscounts,
+            totalDiscount: Object.values(appliedDiscounts).reduce((sum, val) => sum + val, 0)
+        };
+    }
+
+    // 生成卡牌成本显示文本
+    generateCostDisplay(card) {
+        const costInfo = this.calculateActualCost(card);
+        const { originalCost, actualCost, appliedDiscounts, totalDiscount } = costInfo;
+        
+        // 原始成本
+        const originalParts = [];
+        if (originalCost.red > 0) originalParts.push(`红${originalCost.red}`);
+        if (originalCost.pink > 0) originalParts.push(`粉${originalCost.pink}`);
+        if (originalCost.blue > 0) originalParts.push(`蓝${originalCost.blue}`);
+        if (originalCost.yellow > 0) originalParts.push(`黄${originalCost.yellow}`);
+        if (originalCost.black > 0) originalParts.push(`黑${originalCost.black}`);
+        if (originalCost.master > 0) originalParts.push(`万能${originalCost.master}`);
+        
+        // 实际成本
+        const actualParts = [];
+        if (actualCost.red > 0) actualParts.push(`红${actualCost.red}`);
+        if (actualCost.pink > 0) actualParts.push(`粉${actualCost.pink}`);
+        if (actualCost.blue > 0) actualParts.push(`蓝${actualCost.blue}`);
+        if (actualCost.yellow > 0) actualParts.push(`黄${actualCost.yellow}`);
+        if (actualCost.black > 0) actualParts.push(`黑${actualCost.black}`);
+        if (actualCost.master > 0) actualParts.push(`万能${actualCost.master}`);
+        
+        // 抵扣信息
+        const discountParts = [];
+        if (appliedDiscounts.red > 0) discountParts.push(`红-${appliedDiscounts.red}`);
+        if (appliedDiscounts.pink > 0) discountParts.push(`粉-${appliedDiscounts.pink}`);
+        if (appliedDiscounts.blue > 0) discountParts.push(`蓝-${appliedDiscounts.blue}`);
+        if (appliedDiscounts.yellow > 0) discountParts.push(`黄-${appliedDiscounts.yellow}`);
+        if (appliedDiscounts.black > 0) discountParts.push(`黑-${appliedDiscounts.black}`);
+        
+        let costDisplay = '';
+        
+        if (totalDiscount > 0) {
+            const originalText = originalParts.length > 0 ? originalParts.join(' ') : '免费';
+            const actualText = actualParts.length > 0 ? actualParts.join(' ') : '免费';
+            const discountText = discountParts.join(' ');
+            
+            costDisplay = `
+                <div class="card-cost-original">原价: ${originalText}</div>
+                <div class="card-cost-discount">抵扣: ${discountText}</div>
+                <div class="card-cost-actual">实付: ${actualText}</div>
+            `;
+        } else {
+            const costText = originalParts.length > 0 ? originalParts.join(' ') : '免费';
+            costDisplay = `<div class="card-cost">成本: ${costText}</div>`;
+        }
+        
+        return costDisplay;
+    }
+
+    // 生成基础卡牌成本显示文本（不包含抵扣信息）
+    generateBasicCostDisplay(card) {
+        const costParts = [];
+        if (card.need_red > 0) costParts.push(`红${card.need_red}`);
+        if (card.need_pink > 0) costParts.push(`粉${card.need_pink}`);
+        if (card.need_blue > 0) costParts.push(`蓝${card.need_blue}`);
+        if (card.need_yellow > 0) costParts.push(`黄${card.need_yellow}`);
+        if (card.need_black > 0) costParts.push(`黑${card.need_black}`);
+        if (card.need_master > 0) costParts.push(`万能${card.need_master}`);
+        const costText = costParts.length > 0 ? costParts.join(' ') : '免费';
+        
+        return `<div class="card-cost">成本: ${costText}</div>`;
+    }
+    
+    hideGameContent() {
+        // 清空展示卡牌
+        ['level1DisplayCards', 'level2DisplayCards', 'level3DisplayCards', 'rareDisplayCards'].forEach(id => {
+            const container = document.getElementById(id);
+            if (container) container.innerHTML = '';
+        });
+        
+        // 清空玩家信息
+        ['p1ReservedCards', 'p2ReservedCards', 'p1OwnedCards', 'p2OwnedCards'].forEach(id => {
+            const container = document.getElementById(id);
+            if (container) container.innerHTML = '';
+        });
+        
+        // 重置计数器
+        ['p1OwnedCount', 'p2OwnedCount', 'p1Points', 'p2Points'].forEach(id => {
+            const element = document.getElementById(id);
+            if (element) element.textContent = '0';
+        });
+        
+        // 重置硬币显示
+        ['publicRedCoins', 'publicPinkCoins', 'publicBlueCoins', 'publicYellowCoins', 'publicBlackCoins', 'publicPurpleCoins'].forEach(id => {
+            const element = document.getElementById(id);
+            if (element) element.textContent = '0';
+        });
+        
+        // 重置牌堆计数
+        ['level1Count', 'level2Count', 'level3Count', 'rareCount', 'phantomCount'].forEach(id => {
+            const element = document.getElementById(id);
+            if (element) element.textContent = '0';
+        });
+    }
+
     showMessage(message, type = 'info') {
         const toast = document.getElementById('messageToast');
         toast.textContent = message;
