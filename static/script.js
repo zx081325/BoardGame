@@ -45,6 +45,20 @@ class GameClient {
         // 宝可梦游戏拿取硬币按钮
         document.getElementById('takeCoinsButton').addEventListener('click', () => this.takeCoins());
         
+        // 预购牌堆顶部按钮事件委托
+        document.addEventListener('click', (e) => {
+            if (e.target.classList.contains('reserve-deck-button')) {
+                const deckType = e.target.dataset.deck;
+                this.reserveDeckTopCard(deckType);
+            }
+            
+            // 预购展示卡牌点击事件
+            if (e.target.classList.contains('card-item') && e.target.classList.contains('reservable')) {
+                const cardId = parseInt(e.target.dataset.cardId);
+                this.reserveDisplayCard(cardId);
+            }
+        });
+        
         // 回车键登录
         document.getElementById('loginPassword').addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.handleLogin();
@@ -474,11 +488,45 @@ class GameClient {
     }
     
     clearCoinSelection() {
-        document.getElementById('selectRed').value = 0;
-        document.getElementById('selectPink').value = 0;
-        document.getElementById('selectBlue').value = 0;
-        document.getElementById('selectYellow').value = 0;
-        document.getElementById('selectBlack').value = 0;
+        document.getElementById('selectRed').value = '0';
+        document.getElementById('selectPink').value = '0';
+        document.getElementById('selectBlue').value = '0';
+        document.getElementById('selectYellow').value = '0';
+        document.getElementById('selectBlack').value = '0';
+    }
+    
+    reserveDisplayCard(cardId) {
+        if (!this.currentRoom || this.currentRoom.game_type !== 'pokemon_game') {
+            this.showMessage('只能在宝可梦游戏中预购卡牌', 'error');
+            return;
+        }
+        
+        // 发送预购展示卡牌请求
+        this.sendMessage({
+            action: "game_action",
+            game_action: "reserve_card",
+            action_data: {
+                type: "display",
+                target: cardId
+            }
+        });
+    }
+    
+    reserveDeckTopCard(deckType) {
+        if (!this.currentRoom || this.currentRoom.game_type !== 'pokemon_game') {
+            this.showMessage('只能在宝可梦游戏中预购卡牌', 'error');
+            return;
+        }
+        
+        // 发送预购牌堆顶部卡牌请求
+        this.sendMessage({
+            action: "game_action",
+            game_action: "reserve_card",
+            action_data: {
+                type: "deck_top",
+                target: deckType
+            }
+        });
     }
     
     refreshRooms() {
@@ -747,53 +795,163 @@ class GameClient {
         if (!this.currentRoom || !this.currentRoom.game_state) return;
         
         const gameState = this.currentRoom.game_state;
+        const publicInfo = gameState.public_info;
+        const playerData = gameState.player_data;
         
         // 更新公共硬币池
-        if (gameState.coin_pool) {
-            document.getElementById('poolRed').textContent = gameState.coin_pool.red || 0;
-            document.getElementById('poolPink').textContent = gameState.coin_pool.pink || 0;
-            document.getElementById('poolBlue').textContent = gameState.coin_pool.blue || 0;
-            document.getElementById('poolYellow').textContent = gameState.coin_pool.yellow || 0;
-            document.getElementById('poolBlack').textContent = gameState.coin_pool.black || 0;
+        if (publicInfo && publicInfo.coins) {
+            document.getElementById('publicRedCoins').textContent = publicInfo.coins.red || 0;
+            document.getElementById('publicPinkCoins').textContent = publicInfo.coins.pink || 0;
+            document.getElementById('publicBlueCoins').textContent = publicInfo.coins.blue || 0;
+            document.getElementById('publicYellowCoins').textContent = publicInfo.coins.yellow || 0;
+            document.getElementById('publicBlackCoins').textContent = publicInfo.coins.black || 0;
+            document.getElementById('publicPurpleCoins').textContent = publicInfo.coins.purple || 0;
         }
         
-        // 更新玩家硬币
-        const currentPlayer = this.currentRoom.players.find(p => p.user_id === this.currentUser.id);
-        if (currentPlayer && gameState.player_coins && gameState.player_coins[currentPlayer.user_id]) {
-            const playerCoins = gameState.player_coins[currentPlayer.user_id];
-            document.getElementById('playerRed').textContent = playerCoins.red || 0;
-            document.getElementById('playerPink').textContent = playerCoins.pink || 0;
-            document.getElementById('playerBlue').textContent = playerCoins.blue || 0;
-            document.getElementById('playerYellow').textContent = playerCoins.yellow || 0;
-            document.getElementById('playerBlack').textContent = playerCoins.black || 0;
+        // 更新牌堆数量
+        if (publicInfo && publicInfo.deck_counts) {
+            document.getElementById('level1Count').textContent = publicInfo.deck_counts.level_1 || 0;
+            document.getElementById('level2Count').textContent = publicInfo.deck_counts.level_2 || 0;
+            document.getElementById('level3Count').textContent = publicInfo.deck_counts.level_3 || 0;
+            document.getElementById('rareCount').textContent = publicInfo.deck_counts.rare || 0;
+            document.getElementById('phantomCount').textContent = publicInfo.deck_counts.phantom || 0;
         }
         
-        // 更新对手硬币（如果有）
-        const opponent = this.currentRoom.players.find(p => p.user_id !== this.currentUser.id);
-        if (opponent && gameState.player_coins && gameState.player_coins[opponent.user_id]) {
-            const opponentCoins = gameState.player_coins[opponent.user_id];
-            document.getElementById('opponentRed').textContent = opponentCoins.red || 0;
-            document.getElementById('opponentPink').textContent = opponentCoins.pink || 0;
-            document.getElementById('opponentBlue').textContent = opponentCoins.blue || 0;
-            document.getElementById('opponentYellow').textContent = opponentCoins.yellow || 0;
-            document.getElementById('opponentBlack').textContent = opponentCoins.black || 0;
-        }
+        // 更新展示卡牌
+        this.updateDisplayCards(publicInfo);
+        
+        // 更新玩家硬币和预购区域
+        this.updatePlayersInfo(playerData);
         
         // 更新硬币选择器的最大值
-        if (gameState.coin_pool) {
-            document.getElementById('selectRed').max = gameState.coin_pool.red || 0;
-            document.getElementById('selectPink').max = gameState.coin_pool.pink || 0;
-            document.getElementById('selectBlue').max = gameState.coin_pool.blue || 0;
-            document.getElementById('selectYellow').max = gameState.coin_pool.yellow || 0;
-            document.getElementById('selectBlack').max = gameState.coin_pool.black || 0;
+        if (publicInfo && publicInfo.coins) {
+            document.getElementById('selectRed').max = publicInfo.coins.red || 0;
+            document.getElementById('selectPink').max = publicInfo.coins.pink || 0;
+            document.getElementById('selectBlue').max = publicInfo.coins.blue || 0;
+            document.getElementById('selectYellow').max = publicInfo.coins.yellow || 0;
+            document.getElementById('selectBlack').max = publicInfo.coins.black || 0;
         }
         
-        // 更新拿取硬币按钮状态
-        const takeCoinsButton = document.getElementById('takeCoinsButton');
+        // 更新按钮状态
+        this.updateActionButtons();
+    }
+    
+    updateDisplayCards(publicInfo) {
+        if (!publicInfo || !publicInfo.display_cards) return;
+        
+        const deckMappings = {
+            'level_1': 'level1DisplayCards',
+            'level_2': 'level2DisplayCards', 
+            'level_3': 'level3DisplayCards',
+            'rare': 'rareDisplayCards'
+        };
+        
+        const isCurrentPlayerTurn = this.currentRoom.current_player === this.getCurrentPlayerId();
+        const isPlaying = this.currentRoom.status === 'playing';
+        const canReserve = isCurrentPlayerTurn && isPlaying;
+        
+        for (const [deckType, elementId] of Object.entries(deckMappings)) {
+            const container = document.getElementById(elementId);
+            if (!container) continue;
+            
+            container.innerHTML = '';
+            const cards = publicInfo.display_cards[deckType] || [];
+            
+            cards.forEach(card => {
+                const cardElement = document.createElement('div');
+                cardElement.className = 'card-item';
+                cardElement.dataset.cardId = card.id;
+                
+                // 检查是否可以预购（非梦幻、传说卡牌）
+                const canReserveCard = canReserve && !['梦幻', '传说'].includes(card.level);
+                if (canReserveCard) {
+                    cardElement.classList.add('reservable');
+                } else {
+                    cardElement.classList.add('not-reservable');
+                }
+                
+                cardElement.innerHTML = `
+                    <div class="card-name">${card.name}</div>
+                    <div class="card-level">等级: ${card.level}</div>
+                    <div class="card-cost">分数: ${card.points}</div>
+                `;
+                
+                container.appendChild(cardElement);
+            });
+        }
+        
+        // 更新预购牌堆顶部按钮状态
+        document.querySelectorAll('.reserve-deck-button').forEach(button => {
+            button.disabled = !canReserve;
+        });
+    }
+    
+    updatePlayersInfo(playerData) {
+        if (!playerData) return;
+        
+        const players = this.currentRoom.players;
+        
+        players.forEach((player, index) => {
+            const playerIndex = index + 1;
+            const data = playerData[player.user_id];
+            
+            if (!data) return;
+            
+            // 更新玩家硬币
+            document.getElementById(`p${playerIndex}RedCoins`).textContent = data.coins.red || 0;
+            document.getElementById(`p${playerIndex}PinkCoins`).textContent = data.coins.pink || 0;
+            document.getElementById(`p${playerIndex}BlueCoins`).textContent = data.coins.blue || 0;
+            document.getElementById(`p${playerIndex}YellowCoins`).textContent = data.coins.yellow || 0;
+            document.getElementById(`p${playerIndex}BlackCoins`).textContent = data.coins.black || 0;
+            document.getElementById(`p${playerIndex}PurpleCoins`).textContent = data.coins.purple || 0;
+            
+            // 更新预购区域
+            const reservedCards = data.reserved_cards || [];
+            const reservedCount = reservedCards.length;
+            document.getElementById(`p${playerIndex}ReservedCount`).textContent = reservedCount;
+            
+            const reservedContainer = document.getElementById(`p${playerIndex}ReservedCards`);
+            if (reservedContainer) {
+                reservedContainer.innerHTML = '';
+                
+                reservedCards.forEach(reservedCard => {
+                    const cardElement = document.createElement('div');
+                    cardElement.className = 'reserved-card-item';
+                    
+                    if (!reservedCard.visible_to_all) {
+                        cardElement.classList.add('private');
+                        if (player.user_id === this.currentUser.id) {
+                            // 当前玩家可以看到自己的隐私卡牌
+                            cardElement.textContent = `${reservedCard.card.name} (隐私)`;
+                        } else {
+                            // 其他玩家看不到隐私卡牌详情
+                            cardElement.textContent = '隐藏卡牌';
+                        }
+                    } else {
+                        // 对所有人可见的卡牌
+                        cardElement.textContent = reservedCard.card.name;
+                    }
+                    
+                    reservedContainer.appendChild(cardElement);
+                });
+            }
+        });
+    }
+    
+    updateActionButtons() {
         const isCurrentPlayerTurn = this.currentRoom.current_player === this.getCurrentPlayerId();
         const isPlaying = this.currentRoom.status === 'playing';
         
-        takeCoinsButton.disabled = !isCurrentPlayerTurn || !isPlaying;
+        // 更新拿取硬币按钮状态
+        const takeCoinsButton = document.getElementById('takeCoinsButton');
+        if (takeCoinsButton) {
+            takeCoinsButton.disabled = !isCurrentPlayerTurn || !isPlaying;
+        }
+        
+        // 更新预购按钮状态
+        document.querySelectorAll('.reserve-deck-button').forEach(button => {
+            button.disabled = !isCurrentPlayerTurn || !isPlaying;
+        });
     }
     
     showMessage(message, type = 'info') {

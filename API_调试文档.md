@@ -4,6 +4,12 @@
 - **基础URL**: `http://127.0.0.1:8080`
 - **WebSocket URL**: `ws://127.0.0.1:8080/ws/{session_token}`
 
+## 安全说明
+为了保证游戏的公平性和趣味性，服务器采用以下安全措施：
+- **牌堆详情隐藏**: 牌堆中的具体卡牌信息不会暴露给用户，只提供牌堆剩余数量
+- **预购卡牌可见性控制**: 从牌堆顶部预购的卡牌只有预购者可见，其他玩家只能看到"隐藏卡牌"占位符
+- **私有数据保护**: 敏感的游戏数据（如牌堆内容）存储在服务器私有区域，不会通过API暴露
+
 ## 目录
 1. [HTTP REST API](#http-rest-api)
 2. [WebSocket 实时通信 API](#websocket-实时通信-api)
@@ -442,7 +448,96 @@ Authorization: Bearer {session_token}
 }
 ```
 
-### 2. 硬币拿取规则
+### 2. 预购卡牌操作
+
+#### 预购展示卡牌
+**客户端发送**:
+```json
+{
+  "action": "game_action",
+  "game_action": "reserve_card",
+  "action_data": {
+    "type": "display",
+    "card_id": 123
+  }
+}
+```
+
+#### 预购牌堆顶部卡牌
+**客户端发送**:
+```json
+{
+  "action": "game_action",
+  "game_action": "reserve_card",
+  "action_data": {
+    "type": "deck_top",
+    "target": "level_1"
+  }
+}
+```
+
+**成功响应**:
+```json
+{
+  "type": "game_action_result",
+  "success": true,
+  "message": "成功预购卡牌: 皮卡丘",
+  "room_updated": {
+    "current_player": "user_456",
+    "game_state": {
+      "public_info": {
+        "coins": {
+          "purple": 4
+        }
+      },
+      "player_data": {
+        "user_123": {
+          "coins": {
+            "purple": 1
+          },
+          "reserved_cards": [
+            {
+              "card": {
+                "id": 123,
+                "name": "皮卡丘",
+                "level": "1级",
+                "cost": {"red": 2, "blue": 1}
+              },
+              "visible_to_all": true
+            }
+          ]
+        }
+      }
+    }
+  }
+}
+```
+
+**失败响应**:
+```json
+{
+  "type": "game_action_result",
+  "success": false,
+  "message": "预购区域已满，最多只能预购3张卡牌"
+}
+```
+
+### 3. 预购规则说明
+
+#### 预购限制
+- 每个玩家最多可预购3张卡牌
+- 不能预购梦幻、传说等级的卡牌
+- 每次预购会获得1个紫色硬币（如果还有）
+
+#### 预购类型
+1. **预购展示卡牌**: 预购场上公开展示的卡牌
+2. **预购牌堆顶部**: 预购指定牌堆的顶部卡牌（隐私卡牌，只有预购者能看到）
+
+#### 可见性机制
+- 从展示区预购的卡牌：`visible_to_all: true`，所有玩家都能看到完整卡牌信息
+- 从牌堆顶部预购的卡牌：`visible_to_all: false`，只有预购者能看到完整信息，其他玩家只能看到"隐藏卡牌"占位符
+
+### 4. 硬币拿取规则
 
 #### 规则1: 拿取3个不同颜色的硬币
 - 必须选择3种不同颜色
@@ -571,7 +666,9 @@ Authorization: Bearer {session_token}
 
 ### 2. 回合流程
 1. 轮到当前玩家行动
-2. 玩家可以选择拿取硬币（当前唯一可用操作）
+2. 玩家可以选择以下操作之一：
+   - **拿取硬币**: 按规则拿取硬币
+   - **预购卡牌**: 预购展示卡牌或牌堆顶部卡牌
 3. 验证操作合法性
 4. 执行操作并更新游戏状态
 5. 切换到下一个玩家
@@ -671,6 +768,39 @@ ws.send(JSON.stringify({
 }));
 ```
 
+#### 测试预购卡牌功能
+```javascript
+// 预购展示卡牌
+ws.send(JSON.stringify({
+  action: "game_action",
+  game_action: "reserve_card",
+  action_data: {
+    type: "display",
+    card_id: 123
+  }
+}));
+
+// 预购牌堆顶部卡牌
+ws.send(JSON.stringify({
+  action: "game_action",
+  game_action: "reserve_card",
+  action_data: {
+    type: "deck_top",
+    target: "level_1"
+  }
+}));
+
+// 预购不同等级的牌堆顶部
+ws.send(JSON.stringify({
+  action: "game_action",
+  game_action: "reserve_card",
+  action_data: {
+    type: "deck_top",
+    target: "level_2"  // 可选: level_1, level_2, level_3, rare
+  }
+}));
+```
+
 ### 3. 日志监控
 服务器会在控制台输出详细的操作日志，包括：
 - 玩家连接/断开
@@ -681,10 +811,10 @@ ws.send(JSON.stringify({
 ---
 
 ## 版本信息
-- **当前版本**: v1.0.0
-- **最后更新**: 2024-01-01
+- **当前版本**: v1.1.0
+- **最后更新**: 2025-01-20
 - **支持的游戏**: 井字棋、反向井字棋、宝可梦
-- **主要功能**: 用户管理、房间管理、实时游戏、硬币拿取
+- **主要功能**: 用户管理、房间管理、实时游戏、硬币拿取、卡牌预购
 
 ---
 

@@ -38,11 +38,17 @@ class PokemonGame(BaseGame):
     
     def _init_game_state(self) -> Dict:
         """初始化宝可梦游戏状态"""
+        public_info = self._init_public_info()
+        
+        # 从public_info中提取牌堆数据并移到private_data
+        card_decks = public_info.pop("_card_decks")
+        
         return {
             "turn_count": 0,
             "current_phase": "waiting",  # waiting, playing, finished
             "player_data": {},  # 每个玩家的游戏数据
-            "public_info": self._init_public_info(),  # 公共信息
+            "public_info": public_info,  # 公共信息
+            "private_data": {"card_decks": card_decks},  # 私有数据，不暴露给用户
             "winner": None,
             "is_draw": False,
             "last_action": None,
@@ -113,37 +119,46 @@ class PokemonGame(BaseGame):
             "phantom": self._get_display_cards("phantom", card_decks, 1)
         }
         
-        # 计算牌堆剩余数量（初始数量减去已展示的卡牌）
+        # 获取牌堆剩余数量（_get_display_cards已经更新了count）
         deck_counts = {
-            "level_1": card_decks["level_1"]["count"] - len(display_cards["level_1"]),
-            "level_2": card_decks["level_2"]["count"] - len(display_cards["level_2"]),
-            "level_3": card_decks["level_3"]["count"] - len(display_cards["level_3"]),
-            "rare": card_decks["rare"]["count"] - len(display_cards["rare"]),
-            "phantom": card_decks["phantom"]["count"] - len(display_cards["phantom"])
+            "level_1": card_decks["level_1"]["count"],
+            "level_2": card_decks["level_2"]["count"],
+            "level_3": card_decks["level_3"]["count"],
+            "rare": card_decks["rare"]["count"],
+            "phantom": card_decks["phantom"]["count"]
         }
         
         return {
             "coins": coins,
             "display_cards": display_cards,
-            "deck_counts": deck_counts
+            "deck_counts": deck_counts,
+            "_card_decks": card_decks  # 临时存储，稍后移到private_data
         }
     
     def _get_display_cards(self, deck_type: str, card_decks: Dict, count: int) -> List[Dict]:
-        """从指定卡牌堆顶部获取展示卡牌"""
+        """从指定卡牌堆顶部获取展示卡牌并从牌堆中移除"""
         deck = card_decks.get(deck_type, {})
         cards = deck.get("cards", [])
         
         display_cards = []
-        for i in range(min(count, len(cards))):
-            if i < len(cards):
-                display_cards.append(cards[i])
+        actual_count = min(count, len(cards))
+        
+        # 从牌堆顶部取出指定数量的卡牌
+        for i in range(actual_count):
+            if len(cards) > 0:
+                card = cards.pop(0)  # 从牌堆顶部移除卡牌
+                display_cards.append(card)
+        
+        # 更新牌堆数量
+        deck["count"] = len(cards)
         
         return display_cards
     
     def _draw_card_from_deck(self, deck_type: str) -> Optional[Dict]:
         """从指定卡牌堆抽取一张卡牌"""
         public_info = self.game_state["public_info"]
-        deck = public_info["card_decks"].get(deck_type)
+        card_decks = self.game_state["private_data"]["card_decks"]
+        deck = card_decks.get(deck_type)
         
         if not deck or deck["count"] <= 0:
             return None
@@ -155,7 +170,7 @@ class PokemonGame(BaseGame):
         # 更新展示区
         display_count = 4 if deck_type in ["level_1", "level_2", "level_3"] else 1
         public_info["display_cards"][deck_type] = self._get_display_cards(
-            deck_type, public_info["card_decks"], display_count
+            deck_type, card_decks, display_count
         )
         
         return card
@@ -178,14 +193,30 @@ class PokemonGame(BaseGame):
         """获取房间信息（重写基类方法以包含宝可梦游戏特有信息）"""
         base_info = super().get_room_info()
         
-        # 添加玩家详细信息，包括预购卡牌
+        # 添加玩家详细信息，包括预购卡牌（只显示对所有人可见的）
         if self.status == GameStatus.PLAYING:
             player_details = {}
             for player in self.players:
                 player_data = self.game_state["player_data"].get(player.user_id, {})
+                
+                # 过滤预购卡牌，只显示对所有人可见的
+                visible_reserved_cards = []
+                for reserved_card in player_data.get("reserved_cards", []):
+                    if reserved_card.get("visible_to_all", False):
+                        visible_reserved_cards.append(reserved_card)
+                    else:
+                        # 隐私卡牌只显示占位信息
+                        visible_reserved_cards.append({
+                            "card": {
+                                "id": "hidden",
+                                "name": "隐藏卡牌"
+                            },
+                            "visible_to_all": False
+                        })
+                
                 player_details[player.user_id] = {
                     "cards": player_data.get("cards", []),
-                    "reserved_cards": player_data.get("reserved_cards", []),
+                    "reserved_cards": visible_reserved_cards,
                     "coins": player_data.get("coins", {})
                 }
             base_info["player_details"] = player_details
@@ -272,7 +303,7 @@ class PokemonGame(BaseGame):
             # 初始化玩家数据结构
             self.game_state["player_data"][player.user_id] = {
                 "cards": [],  # 初始化玩家卡牌列表（空）
-                "reserved_cards": [],  # 初始化玩家预购卡牌列表（空）
+                "reserved_cards": [],  # 预购卡牌列表，每张卡牌包含可见性信息
                 "coins": {    # 初始化玩家钱币列表（全为0）
                     "red": 0,
                     "pink": 0,
@@ -384,6 +415,8 @@ class PokemonGame(BaseGame):
         """处理宝可梦游戏特定操作"""
         if action == "take_coins":
             return self._handle_take_coins(player_id, action_data)
+        elif action == "reserve_card":
+            return self._handle_reserve_card(player_id, action_data)
         else:
             return {"success": False, "message": f"不支持的操作: {action}"}
     
@@ -543,46 +576,6 @@ class PokemonGame(BaseGame):
             print(f"执行动作时出错: {e}")
             return False
     
-    def _validate_move_action(self, player_id: str, move_data: Dict) -> bool:
-        """验证移动动作"""
-        # TODO: 实现具体的移动验证逻辑
-        return True
-    
-    def _validate_attack_action(self, player_id: str, move_data: Dict) -> bool:
-        """验证攻击动作"""
-        # TODO: 实现具体的攻击验证逻辑
-        return True
-    
-    def _validate_item_action(self, player_id: str, move_data: Dict) -> bool:
-        """验证道具使用动作"""
-        # TODO: 实现具体的道具验证逻辑
-        return True
-    
-    def _validate_special_action(self, player_id: str, move_data: Dict) -> bool:
-        """验证特殊动作"""
-        # TODO: 实现具体的特殊动作验证逻辑
-        return True
-    
-    def _execute_move(self, player_id: str, move_data: Dict) -> bool:
-        """执行移动"""
-        # TODO: 实现具体的移动逻辑
-        return True
-    
-    def _execute_attack(self, player_id: str, move_data: Dict) -> bool:
-        """执行攻击"""
-        # TODO: 实现具体的攻击逻辑
-        return True
-    
-    def _execute_use_item(self, player_id: str, move_data: Dict) -> bool:
-        """执行道具使用"""
-        # TODO: 实现具体的道具使用逻辑
-        return True
-    
-    def _execute_special(self, player_id: str, move_data: Dict) -> bool:
-        """执行特殊动作"""
-        # TODO: 实现具体的特殊动作逻辑
-        return True
-    
     def _check_winner(self) -> Optional[str]:
         """检查是否有获胜者"""
         # TODO: 实现具体的获胜条件检查
@@ -603,11 +596,6 @@ class PokemonGame(BaseGame):
         
         return None
     
-    def _check_draw(self) -> bool:
-        """检查是否平局"""
-        # TODO: 实现具体的平局条件检查
-        # 示例：如果游戏进行了100回合还没有获胜者，则平局
-        return self.game_state["turn_count"] >= 100
     
     def get_game_rules(self) -> Dict:
         """获取游戏规则说明"""
@@ -617,16 +605,238 @@ class PokemonGame(BaseGame):
             "max_players": 4,
             "rules": [
                 "游戏支持4名玩家同时进行",
-                "玩家轮流进行行动",
-                "每回合可以选择移动、攻击、使用道具或特殊动作",
-                "游戏目标和具体规则将在后续版本中完善",
-                "当前版本为基础框架，支持基本的回合制游戏流程"
+                "玩家轮流进行行动, 先得到20分的玩家获胜",
             ],
             "actions": [
-                "move - 移动角色位置",
-                "attack - 攻击其他玩家",
-                "use_item - 使用道具",
-                "pass - 跳过当前回合",
-                "special - 使用特殊技能"
+                "take_coins - 拿取硬币",
+                "reserve_card - 预购卡牌"
             ]
         }
+    
+    def _handle_reserve_card(self, player_id: str, action_data: Dict) -> Dict:
+        """处理预购卡牌操作"""
+        try:
+            # 检查游戏状态
+            if self.status != GameStatus.PLAYING:
+                return {"success": False, "message": "游戏未开始"}
+            
+            # 检查是否是当前玩家的回合
+            current_player = self.get_current_player()
+            if not current_player or current_player.user_id != player_id:
+                return {"success": False, "message": "不是你的回合"}
+            
+            # 获取预购类型和目标
+            reserve_type = action_data.get("type")  # "display" 或 "deck_top"
+            
+            if not reserve_type:
+                return {"success": False, "message": "缺少预购类型参数"}
+            
+            # 根据预购类型获取相应的目标参数
+            if reserve_type == "display":
+                target = action_data.get("card_id")  # 展示卡牌的ID
+                if target is None:
+                    return {"success": False, "message": "缺少卡牌ID参数"}
+            elif reserve_type == "deck_top":
+                target = action_data.get("deck_type")  # 牌堆类型
+                if not target:
+                    return {"success": False, "message": "缺少牌堆类型参数"}
+            else:
+                return {"success": False, "message": "无效的预购类型"}
+            
+            # 检查预购区域是否已满
+            player_data = self.game_state["player_data"][player_id]
+            if len(player_data["reserved_cards"]) >= 3:
+                return {"success": False, "message": "预购区域已满（最多3张卡牌）"}
+            
+            # 检查紫色硬币是否足够
+            public_coins = self.game_state["public_info"]["coins"]
+            if public_coins["purple"] <= 0:
+                return {"success": False, "message": "没有紫色硬币可获得"}
+            
+            if reserve_type == "display":
+                return self._reserve_display_card(player_id, target)
+            else:  # reserve_type == "deck_top"
+                return self._reserve_deck_top_card(player_id, target)
+                
+        except Exception as e:
+            return {"success": False, "message": f"预购卡牌时出错: {e}"}
+    
+    def _reserve_display_card(self, player_id: str, card_id: int) -> Dict:
+        """预购场上展示的卡牌"""
+        try:
+            # 查找目标卡牌
+            target_card = None
+            target_deck_type = None
+            target_index = None
+            
+            display_cards = self.game_state["public_info"]["display_cards"]
+            for deck_type, cards in display_cards.items():
+                for i, card in enumerate(cards):
+                    if card.get("id") == card_id:
+                        target_card = card
+                        target_deck_type = deck_type
+                        target_index = i
+                        break
+                if target_card:
+                    break
+            
+            if not target_card:
+                return {"success": False, "message": "未找到指定的卡牌"}
+            
+            # 检查是否为梦幻或传说卡牌（不能预购）
+            if target_card.get("level") in ["梦幻", "传说"]:
+                return {"success": False, "message": "不能预购梦幻或传说卡牌"}
+            
+            # 执行预购
+            # 1. 从展示区移除卡牌
+            display_cards[target_deck_type].pop(target_index)
+            
+            # 2. 从对应牌堆补充新卡牌到展示区
+            self._refill_display_card(target_deck_type)
+            
+            # 3. 将卡牌添加到玩家预购区域（展示卡牌对所有人可见）
+            player_data = self.game_state["player_data"][player_id]
+            reserved_card = {
+                "card": target_card,
+                "visible_to_all": True  # 从展示区预购的卡牌对所有人可见
+            }
+            player_data["reserved_cards"].append(reserved_card)
+            
+            # 4. 给玩家一个紫色硬币
+            player_data["coins"]["purple"] += 1
+            self.game_state["public_info"]["coins"]["purple"] -= 1
+            
+            # 5. 切换到下一个玩家
+            self.next_player()
+            self.game_state["turn_count"] += 1
+            
+            # 记录操作
+            self.game_state["last_action"] = {
+                "player_id": player_id,
+                "action": "reserve_display_card",
+                "card": target_card
+            }
+            
+            return {
+                "success": True,
+                "message": f"成功预购卡牌: {target_card.get('name', '未知卡牌')}，获得1个紫色硬币"
+            }
+            
+        except Exception as e:
+            return {"success": False, "message": f"预购展示卡牌时出错: {e}"}
+    
+    def _reserve_deck_top_card(self, player_id: str, deck_type: str) -> Dict:
+        """预购牌堆顶部的卡牌"""
+        try:
+            # 检查牌堆类型是否有效
+            valid_deck_types = ["level_1", "level_2", "level_3", "rare"]
+            if deck_type not in valid_deck_types:
+                return {"success": False, "message": "无效的牌堆类型"}
+            
+            # 检查牌堆是否还有卡牌
+            card_decks = self.game_state["private_data"]["card_decks"]
+            deck = card_decks.get(deck_type)
+            if not deck or len(deck["cards"]) == 0:
+                return {"success": False, "message": f"{deck.get('name', '牌堆')}已空"}
+            
+            # 获取牌堆顶部卡牌
+            top_card = deck["cards"][0]
+            
+            # 检查是否为梦幻或传说卡牌（不能预购）
+            if top_card.get("level") in ["梦幻", "传说"]:
+                return {"success": False, "message": "不能预购梦幻或传说卡牌"}
+            
+            # 执行预购
+            # 1. 从牌堆移除顶部卡牌
+            deck["cards"].pop(0)
+            deck["count"] -= 1
+            self.game_state["public_info"]["deck_counts"][deck_type] -= 1
+            
+            # 2. 将卡牌添加到玩家预购区域（牌堆顶部卡牌只有自己可见）
+            player_data = self.game_state["player_data"][player_id]
+            reserved_card = {
+                "card": top_card,
+                "visible_to_all": False  # 从牌堆顶部预购的卡牌只有自己可见
+            }
+            player_data["reserved_cards"].append(reserved_card)
+            
+            # 3. 给玩家一个紫色硬币
+            player_data["coins"]["purple"] += 1
+            self.game_state["public_info"]["coins"]["purple"] -= 1
+            
+            # 4. 切换到下一个玩家
+            self.next_player()
+            self.game_state["turn_count"] += 1
+            
+            # 记录操作（不暴露卡牌信息）
+            self.game_state["last_action"] = {
+                "player_id": player_id,
+                "action": "reserve_deck_top_card",
+                "deck_type": deck_type
+            }
+            
+            return {
+                "success": True,
+                "message": f"成功预购{deck.get('name', '牌堆')}顶部卡牌，获得1个紫色硬币"
+            }
+            
+        except Exception as e:
+            return {"success": False, "message": f"预购牌堆顶部卡牌时出错: {e}"}
+    
+    def _refill_display_card(self, deck_type: str):
+        """为展示区补充新卡牌"""
+        try:
+            card_decks = self.game_state["private_data"]["card_decks"]
+            deck = card_decks.get(deck_type)
+            
+            if deck and len(deck["cards"]) > 0:
+                # 从牌堆顶部取一张卡牌补充到展示区
+                new_card = deck["cards"].pop(0)
+                deck["count"] -= 1
+                self.game_state["public_info"]["deck_counts"][deck_type] -= 1
+                self.game_state["public_info"]["display_cards"][deck_type].append(new_card)
+                
+        except Exception as e:
+            print(f"补充展示卡牌时出错: {e}")
+    
+    def get_player_view(self, player_id: str) -> Dict:
+        """获取玩家视角的游戏状态（包含隐私信息）"""
+        try:
+            # 获取基础游戏状态
+            base_state = self.get_public_info()
+            
+            # 添加玩家特定的隐私信息
+            if player_id in self.game_state["player_data"]:
+                player_data = self.game_state["player_data"][player_id]
+                
+                # 为玩家显示完整的预购卡牌信息（包括隐私卡牌）
+                base_state["player_reserved_cards"] = player_data["reserved_cards"]
+                
+                # 为其他玩家隐藏隐私卡牌的详细信息
+                other_players_reserved = {}
+                for other_player_id, other_data in self.game_state["player_data"].items():
+                    if other_player_id != player_id:
+                        # 只显示对所有人可见的卡牌信息
+                        visible_cards = []
+                        for reserved_card in other_data["reserved_cards"]:
+                            if reserved_card.get("visible_to_all", False):
+                                # 对所有人可见的卡牌显示完整信息
+                                visible_cards.append(reserved_card)
+                            else:
+                                # 隐私卡牌只显示基本信息
+                                visible_cards.append({
+                                    "card": {
+                                        "id": "hidden",
+                                        "name": "隐藏卡牌"
+                                    },
+                                    "visible_to_all": False
+                                })
+                        other_players_reserved[other_player_id] = visible_cards
+                
+                base_state["other_players_reserved"] = other_players_reserved
+            
+            return base_state
+            
+        except Exception as e:
+            print(f"获取玩家视角时出错: {e}")
+            return self.get_public_info()

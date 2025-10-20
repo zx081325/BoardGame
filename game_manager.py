@@ -193,13 +193,20 @@ class GameManager:
         if not game:
             return None
         
+        # 创建过滤后的游戏状态，排除私有数据
+        filtered_game_state = {}
+        if game.game_state:
+            for key, value in game.game_state.items():
+                if key != "private_data":  # 排除私有数据
+                    filtered_game_state[key] = value
+        
         return {
             "room_id": room_id,
             "room_name": game.room_name,
             "game_type": game.game_type,
             "game_name": game.game_name,
             "status": game.status.value,
-            "game_state": game.game_state,
+            "game_state": filtered_game_state,
             "players": [
                 {
                     "user_id": player.user_id,
