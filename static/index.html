@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>在线棋牌游戏平台</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- 登录界面 -->
+    <div id="loginScreen" class="screen active">
+        <div class="login-container">
+            <h1>在线棋牌游戏平台</h1>
+            <div class="login-form">
+                <div class="form-tabs">
+                    <button id="loginTab" class="tab-button active">登录</button>
+                    <button id="registerTab" class="tab-button">注册</button>
+                </div>
+                
+                <!-- 登录表单 -->
+                <div id="loginForm" class="form-content active">
+                    <div class="input-group">
+                        <label for="loginUsername">用户名</label>
+                        <input type="text" id="loginUsername" placeholder="请输入用户名" maxlength="20">
+                    </div>
+                    <div class="input-group">
+                        <label for="loginPassword">密码</label>
+                        <input type="password" id="loginPassword" placeholder="请输入密码">
+                    </div>
+                    <button id="loginButton" class="primary-button">登录</button>
+                </div>
+                
+                <!-- 注册表单 -->
+                <div id="registerForm" class="form-content">
+                    <div class="input-group">
+                        <label for="registerUsername">用户名</label>
+                        <input type="text" id="registerUsername" placeholder="3-20个字符" maxlength="20">
+                    </div>
+                    <div class="input-group">
+                        <label for="registerPassword">密码</label>
+                        <input type="password" id="registerPassword" placeholder="至少6个字符">
+                    </div>
+                    <div class="input-group">
+                        <label for="confirmPassword">确认密码</label>
+                        <input type="password" id="confirmPassword" placeholder="再次输入密码">
+                    </div>
+                    <button id="registerButton" class="primary-button">注册</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 游戏大厅 -->
+    <div id="lobbyScreen" class="screen">
+        <div class="lobby-container">
+            <div class="lobby-header">
+                <h1>游戏大厅</h1>
+                <div class="user-info">
+                    <span id="currentUsername">用户名</span>
+                    <button id="logoutButton" class="secondary-button">退出登录</button>
+                </div>
+            </div>
+            
+            <div class="lobby-content">
+                <div class="lobby-sidebar">
+                    <div class="create-room-section">
+                        <h3>创建房间</h3>
+                        <div class="input-group">
+                            <label for="roomName">房间名称</label>
+                            <input type="text" id="roomName" placeholder="输入房间名称" maxlength="30">
+                        </div>
+                        <div class="input-group">
+                            <label for="gameType">游戏类型</label>
+                            <select id="gameType">
+                                <option value="">选择游戏类型...</option>
+                            </select>
+                        </div>
+                        <button id="createRoomButton" class="primary-button">创建房间</button>
+                    </div>
+                    
+                    <div class="quick-join-section">
+                        <h3>快速加入</h3>
+                        <div class="input-group">
+                            <label for="roomId">房间ID</label>
+                            <input type="text" id="roomId" placeholder="输入房间ID">
+                        </div>
+                        <button id="joinRoomButton" class="primary-button">加入房间</button>
+                    </div>
+                </div>
+                
+                <div class="rooms-list">
+                    <div class="rooms-header">
+                        <h3>房间列表</h3>
+                        <button id="refreshRoomsButton" class="secondary-button">刷新</button>
+                    </div>
+                    <div id="roomsList" class="rooms-grid">
+                        <!-- 房间列表将在这里动态生成 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 游戏界面 -->
+    <div id="gameScreen" class="screen">
+        <div class="game-container">
+            <div class="game-header">
+                <div class="room-info">
+                    <h2 id="gameRoomName">房间名称</h2>
+                    <span id="gameRoomId">房间ID: </span>
+                </div>
+                <div class="game-actions">
+                    <button id="leaveRoomButton" class="secondary-button">离开房间</button>
+                </div>
+            </div>
+            
+            <div class="game-content">
+                <div class="players-info">
+                    <div class="player-card" id="player1">
+                        <div class="player-avatar">👤</div>
+                        <div class="player-name">等待玩家...</div>
+                        <div class="player-symbol">X</div>
+                    </div>
+                    <div class="vs-indicator">VS</div>
+                    <div class="player-card" id="player2">
+                        <div class="player-avatar">👤</div>
+                        <div class="player-name">等待玩家...</div>
+                        <div class="player-symbol">O</div>
+                    </div>
+                </div>
+                
+                <div class="game-status">
+                    <div id="gameStatusText">等待玩家加入...</div>
+                    <div id="currentTurnIndicator"></div>
+                </div>
+                
+                <!-- 井字棋游戏板 -->
+                <div id="ticTacToeBoard" class="game-board">
+                    <div class="board-grid">
+                        <div class="cell" data-row="0" data-col="0"></div>
+                        <div class="cell" data-row="0" data-col="1"></div>
+                        <div class="cell" data-row="0" data-col="2"></div>
+                        <div class="cell" data-row="1" data-col="0"></div>
+                        <div class="cell" data-row="1" data-col="1"></div>
+                        <div class="cell" data-row="1" data-col="2"></div>
+                        <div class="cell" data-row="2" data-col="0"></div>
+                        <div class="cell" data-row="2" data-col="1"></div>
+                        <div class="cell" data-row="2" data-col="2"></div>
+                    </div>
+                </div>
+                
+                <!-- 宝可梦游戏界面 -->
+                <div id="pokemonGameBoard" class="game-board" style="display: none;">
+                    <div class="pokemon-game-container">
+                        <!-- 公共信息区域 -->
+                        <div class="public-info">
+                            <div class="coins-pool">
+                                <h3>硬币池</h3>
+                                <div class="coins-display">
+                                    <div class="coin-item">
+                                        <span class="coin-color red">🔴</span>
+                                        <span class="coin-count" id="publicRedCoins">0</span>
+                                    </div>
+                                    <div class="coin-item">
+                                        <span class="coin-color pink">🩷</span>
+                                        <span class="coin-count" id="publicPinkCoins">0</span>
+                                    </div>
+                                    <div class="coin-item">
+                                        <span class="coin-color blue">🔵</span>
+                                        <span class="coin-count" id="publicBlueCoins">0</span>
+                                    </div>
+                                    <div class="coin-item">
+                                        <span class="coin-color yellow">🟡</span>
+                                        <span class="coin-count" id="publicYellowCoins">0</span>
+                                    </div>
+                                    <div class="coin-item">
+                                        <span class="coin-color black">⚫</span>
+                                        <span class="coin-count" id="publicBlackCoins">0</span>
+                                    </div>
+                                    <div class="coin-item">
+                                        <span class="coin-color purple">🟣</span>
+                                        <span class="coin-count" id="publicPurpleCoins">0</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="deck-counts">
+                                <h3>剩余卡牌</h3>
+                                <div class="deck-display">
+                                    <div class="deck-item">等级1: <span id="level1Count">0</span></div>
+                                    <div class="deck-item">等级2: <span id="level2Count">0</span></div>
+                                    <div class="deck-item">等级3: <span id="level3Count">0</span></div>
+                                    <div class="deck-item">稀有: <span id="rareCount">0</span></div>
+                                    <div class="deck-item">幻影: <span id="phantomCount">0</span></div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 玩家操作区域 -->
+                        <div class="player-actions">
+                            <div class="coin-taking-section">
+                                <h3>拿取硬币</h3>
+                                <div class="coin-selection">
+                                    <div class="coin-selector">
+                                        <span class="coin-color red">🔴</span>
+                                        <input type="number" id="selectRed" min="0" max="2" value="0">
+                                    </div>
+                                    <div class="coin-selector">
+                                        <span class="coin-color pink">🩷</span>
+                                        <input type="number" id="selectPink" min="0" max="2" value="0">
+                                    </div>
+                                    <div class="coin-selector">
+                                        <span class="coin-color blue">🔵</span>
+                                        <input type="number" id="selectBlue" min="0" max="2" value="0">
+                                    </div>
+                                    <div class="coin-selector">
+                                        <span class="coin-color yellow">🟡</span>
+                                        <input type="number" id="selectYellow" min="0" max="2" value="0">
+                                    </div>
+                                    <div class="coin-selector">
+                                        <span class="coin-color black">⚫</span>
+                                        <input type="number" id="selectBlack" min="0" max="2" value="0">
+                                    </div>
+                                </div>
+                                <button id="takeCoinsButton" class="primary-button">拿取硬币</button>
+                            </div>
+                        </div>
+                        
+                        <!-- 玩家硬币显示 -->
+                        <div class="players-coins">
+                            <div class="player-coins" id="player1Coins">
+                                <h4>玩家1硬币</h4>
+                                <div class="coins-display small">
+                                    <div class="coin-item">🔴 <span id="p1RedCoins">0</span></div>
+                                    <div class="coin-item">🩷 <span id="p1PinkCoins">0</span></div>
+                                    <div class="coin-item">🔵 <span id="p1BlueCoins">0</span></div>
+                                    <div class="coin-item">🟡 <span id="p1YellowCoins">0</span></div>
+                                    <div class="coin-item">⚫ <span id="p1BlackCoins">0</span></div>
+                                    <div class="coin-item">🟣 <span id="p1PurpleCoins">0</span></div>
+                                </div>
+                            </div>
+                            <div class="player-coins" id="player2Coins">
+                                <h4>玩家2硬币</h4>
+                                <div class="coins-display small">
+                                    <div class="coin-item">🔴 <span id="p2RedCoins">0</span></div>
+                                    <div class="coin-item">🩷 <span id="p2PinkCoins">0</span></div>
+                                    <div class="coin-item">🔵 <span id="p2BlueCoins">0</span></div>
+                                    <div class="coin-item">🟡 <span id="p2YellowCoins">0</span></div>
+                                    <div class="coin-item">⚫ <span id="p2BlackCoins">0</span></div>
+                                    <div class="coin-item">🟣 <span id="p2PurpleCoins">0</span></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="game-controls">
+                    <button id="newGameButton" class="primary-button" style="display: none;">新游戏</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 连接状态指示器 -->
+    <div id="connectionStatus" class="connection-status">
+        <div class="status-indicator"></div>
+        <span class="status-text">连接中...</span>
+    </div>
+
+    <!-- 消息提示 -->
+    <div id="messageToast" class="message-toast"></div>
+
+    <script src="/static/script.js"></script>
+</body>
+</html>
