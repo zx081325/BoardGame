@@ -64,12 +64,10 @@ class BaseGame(ABC):
         """初始化游戏状态"""
         pass
     
-    @abstractmethod
     def make_move(self, player_id: str, move_data: Dict) -> MoveResult:
         """执行游戏移动"""
         pass
     
-    @abstractmethod
     def is_valid_move(self, player_id: str, move_data: Dict) -> bool:
         """验证移动是否有效"""
         pass
