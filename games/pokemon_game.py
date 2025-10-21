@@ -52,7 +52,13 @@ class PokemonGame(BaseGame):
             "winner": None,
             "is_draw": False,
             "last_action": None,
-            "action_history": []
+            "action_history": [],
+            # 回合状态控制
+            "turn_state": {
+                "main_action_done": False,  # 主要操作是否已完成（购买/拿硬币/预购）
+                "upgrade_action_done": False,  # 升级操作是否已完成
+                "current_player_id": None  # 当前回合玩家ID
+            }
         }
     
     def _init_public_info(self) -> Dict:
@@ -296,6 +302,10 @@ class PokemonGame(BaseGame):
         self._assign_player_symbols()
         self._init_player_resources()
         self._init_game_board()
+        
+        # 初始化回合状态
+        if self.players:
+            self.game_state["turn_state"]["current_player_id"] = self.players[0].user_id
     
     def _init_player_resources(self):
         """为每个玩家初始化资源（卡牌和钱币）"""
@@ -332,6 +342,10 @@ class PokemonGame(BaseGame):
             return self._handle_reserve_card(player_id, action_data)
         elif action == "buy_card":
             return self._handle_buy_card(player_id, action_data)
+        elif action == "upgrade_card":
+            return self._handle_upgrade_card(player_id, action_data)
+        elif action == "return_coins":
+            return self._handle_return_coins(player_id, action_data)
         elif action == "end_turn":
             return self._handle_end_turn(player_id, action_data)
         else:
@@ -360,6 +374,11 @@ class PokemonGame(BaseGame):
             # 检查是否是当前玩家的回合
             if self.players[current_player_index].user_id != player_id:
                 return {"success": False, "message": "不是你的回合"}
+            
+            # 检查回合状态 - 是否已经进行过主要操作
+            turn_state = self.game_state.get("turn_state", {})
+            if turn_state.get("main_action_done", False):
+                return {"success": False, "message": "本回合已经进行过主要操作（购买/拿硬币/预购），无法再次操作"}
         except Exception as e:
             print(f"DEBUG: Exception in _handle_take_coins initial checks: {e}")
             return {"success": False, "message": f"处理拿取硬币时出错: {e}"}
@@ -396,6 +415,9 @@ class PokemonGame(BaseGame):
             "action": "take_coins",
             "coins": coins_to_take
         }
+        
+        # 更新回合状态 - 标记主要操作已完成
+        self.game_state["turn_state"]["main_action_done"] = True
         
         return {
             "success": True, 
@@ -501,13 +523,21 @@ class PokemonGame(BaseGame):
                 "游戏支持4名玩家同时进行",
                 "玩家轮流进行行动, 先得到20分的玩家获胜",
                 "稀有与传说卡牌不允许预购",
-                "拿取硬币、预购卡牌、购买卡牌等操作不会自动结束回合",
-                "需要手动调用结束回合接口才会切换到下一个玩家"
+                "回合流程：每回合玩家可以选择购买/拿硬币/预购（0-1次），然后可以选择升级一次或不升级，最后结束回合",
+                "拿取硬币、预购卡牌、购买卡牌、升级卡牌等操作不会自动结束回合",
+                "需要手动调用结束回合接口才会切换到下一个玩家",
+                "玩家硬币总数不能超过10个，结束回合前必须确保硬币数量不超过限制",
+                "当硬币总数超过10个时，可使用退回金币操作退回多余硬币至10个限制",
+                "退回金币操作需要玩家手动指定要退回的具体硬币数量和颜色",
+                "必须退回恰好 (当前硬币总数 - 10) 个硬币，使最终硬币总数为10个",
+                "退回操作不受回合状态限制，可在任何时候执行"
             ],
             "actions": [
                 "take_coins - 拿取硬币",
                 "reserve_card - 预购卡牌",
                 "buy_card - 购买卡牌",
+                "upgrade_card - 升级卡牌",
+                "return_coins - 退回硬币",
                 "end_turn - 结束回合"
             ]
         }
@@ -523,6 +553,11 @@ class PokemonGame(BaseGame):
             current_player = self.get_current_player()
             if not current_player or current_player.user_id != player_id:
                 return {"success": False, "message": "不是你的回合"}
+            
+            # 检查回合状态 - 是否已经进行过主要操作
+            turn_state = self.game_state.get("turn_state", {})
+            if turn_state.get("main_action_done", False):
+                return {"success": False, "message": "本回合已经进行过主要操作（购买/拿硬币/预购），无法再次操作"}
             
             # 获取预购类型和目标
             reserve_type = action_data.get("type")  # "display" 或 "deck_top"
@@ -612,6 +647,9 @@ class PokemonGame(BaseGame):
                 "card": target_card
             }
             
+            # 更新回合状态 - 标记主要操作已完成
+            self.game_state["turn_state"]["main_action_done"] = True
+            
             return {
                 "success": True,
                 "message": f"成功预购卡牌: {target_card.get('name', '未知卡牌')}，获得1个紫色硬币"
@@ -665,6 +703,9 @@ class PokemonGame(BaseGame):
                 "action": "reserve_deck_top_card",
                 "deck_type": deck_type
             }
+            
+            # 更新回合状态 - 标记主要操作已完成
+            self.game_state["turn_state"]["main_action_done"] = True
             
             return {
                 "success": True,
@@ -744,6 +785,10 @@ class PokemonGame(BaseGame):
             if not current_player or current_player.user_id != player_id:
                 return {"success": False, "message": "不是你的回合"}
             
+            # 检查回合状态 - 是否已完成主要操作
+            if self.game_state["turn_state"]["main_action_done"]:
+                return {"success": False, "message": "本回合已完成主要操作，无法再购买卡牌"}
+            
             # 获取购买类型和目标
             buy_type = action_data.get("buy_type")  # "display" 或 "reserved"
             
@@ -811,6 +856,9 @@ class PokemonGame(BaseGame):
                 "cost": cost_result["final_cost"]
             }
             
+            # 更新回合状态 - 标记主要操作已完成
+            self.game_state["turn_state"]["main_action_done"] = True
+            
             return {
                 "success": True,
                 "message": f"成功购买卡牌: {target_card.get('name', '未知卡牌')}",
@@ -857,6 +905,9 @@ class PokemonGame(BaseGame):
                 "card": target_card,
                 "cost": cost_result["final_cost"]
             }
+            
+            # 更新回合状态 - 标记主要操作已完成
+            self.game_state["turn_state"]["main_action_done"] = True
             
             return {
                 "success": True,
@@ -1016,9 +1067,130 @@ class PokemonGame(BaseGame):
         except Exception as e:
             return {"success": False, "message": f"支付时出错: {e}"}
     
+    def _handle_upgrade_card(self, player_id: str, action_data: Dict) -> Dict:
+        """处理升级卡牌操作"""
+        try:
+            # 检查游戏状态
+            if self.status != GameStatus.PLAYING:
+                return {"success": False, "message": "游戏未开始"}
+            
+            # 检查是否是当前玩家的回合
+            if not self.players:
+                return {"success": False, "message": "没有玩家在游戏中"}
+            
+            current_player_index = self.current_player_index
+            if current_player_index >= len(self.players):
+                return {"success": False, "message": "当前玩家索引无效"}
+            
+            if self.players[current_player_index].user_id != player_id:
+                return {"success": False, "message": "不是你的回合"}
+            
+            # 检查回合状态 - 是否已完成升级操作
+            if self.game_state["turn_state"]["upgrade_action_done"]:
+                return {"success": False, "message": "本回合已完成升级操作，无法再次升级"}
+            
+            # TODO: 实现具体的升级逻辑
+            # 这里暂时返回成功，等待后续实现具体逻辑
+            
+            # 记录操作
+            self.game_state["last_action"] = {
+                "player_id": player_id,
+                "action": "upgrade_card",
+                "data": action_data
+            }
+            
+            # 更新回合状态 - 标记升级操作已完成
+            self.game_state["turn_state"]["upgrade_action_done"] = True
+            
+            return {
+                "success": True,
+                "message": "升级操作已记录（逻辑待实现）"
+            }
+            
+        except Exception as e:
+            return {"success": False, "message": f"处理升级操作时出错: {e}"}
+    
     def next_player(self):
         """切换到下一个玩家"""
         self.current_player_index = (self.current_player_index + 1) % len(self.players)
+    
+    def _handle_return_coins(self, player_id: str, action_data: Dict) -> Dict:
+        """处理退回金币操作 - 玩家手动选择退回硬币，必须退回到恰好10个"""
+        try:
+            # 检查游戏状态
+            if self.status != GameStatus.PLAYING:
+                return {"success": False, "message": "游戏未开始"}
+            
+            # 检查玩家列表是否为空
+            if not self.players:
+                return {"success": False, "message": "没有玩家在游戏中"}
+            
+            # 检查当前玩家索引是否有效
+            current_player_index = self.current_player_index
+            if current_player_index >= len(self.players):
+                return {"success": False, "message": "当前玩家索引无效"}
+            
+            # 检查是否是当前玩家的回合
+            if self.players[current_player_index].user_id != player_id:
+                return {"success": False, "message": "不是你的回合"}
+            
+            # 获取玩家要退回的硬币
+            if "coins" not in action_data:
+                return {"success": False, "message": "请指定要退回的硬币"}
+            
+            coins_to_return = action_data["coins"]
+            if not isinstance(coins_to_return, dict):
+                return {"success": False, "message": "硬币数据格式错误"}
+            
+            # 计算玩家当前硬币总数
+            player_coins = self.game_state["player_data"][player_id]["coins"]
+            total_coins = sum(player_coins.values())
+            
+            # 如果硬币总数不超过10个，不允许退回
+            if total_coins <= 10:
+                return {"success": False, "message": f"当前硬币总数为{total_coins}个，不超过10个限制，无需退回硬币"}
+            
+            # 计算要退回的硬币总数
+            return_total = sum(coins_to_return.values())
+            
+            # 验证退回后硬币总数必须恰好为10个
+            expected_return_count = total_coins - 10
+            if return_total != expected_return_count:
+                return {"success": False, "message": f"必须退回{expected_return_count}个硬币，使硬币总数为10个，当前选择退回{return_total}个"}
+            
+            # 验证玩家是否有足够的硬币退回
+            for color, count in coins_to_return.items():
+                if count < 0:
+                    return {"success": False, "message": f"退回硬币数量不能为负数: {color}"}
+                if count > player_coins.get(color, 0):
+                    return {"success": False, "message": f"没有足够的{color}硬币退回，拥有{player_coins.get(color, 0)}个，要退回{count}个"}
+            
+            # 执行硬币退回
+            # 从玩家硬币中扣除
+            for color, count in coins_to_return.items():
+                if count > 0:
+                    player_coins[color] -= count
+            
+            # 添加到公共硬币池中
+            public_coins = self.game_state["public_info"]["coins"]
+            for color, count in coins_to_return.items():
+                if count > 0:
+                    public_coins[color] += count
+            
+            # 记录操作
+            self.game_state["last_action"] = {
+                "player_id": player_id,
+                "action": "return_coins",
+                "coins": coins_to_return
+            }
+            
+            return {
+                "success": True, 
+                "message": f"成功退回{return_total}个硬币: {', '.join([f'{color}x{count}' for color, count in coins_to_return.items() if count > 0])}"
+            }
+            
+        except Exception as e:
+            return {"success": False, "message": f"处理退回硬币时出错: {e}"}
     
     def _handle_end_turn(self, player_id: str, action_data: Dict) -> Dict:
         """处理结束回合操作"""
@@ -1032,8 +1204,22 @@ class PokemonGame(BaseGame):
             if not current_player or current_player.user_id != player_id:
                 return {"success": False, "message": "不是你的回合"}
             
+            # 检查当前玩家硬币总数是否超过10个
+            player_coins = self.game_state["player_data"][player_id]["coins"]
+            total_coins = sum(player_coins.values())
+            if total_coins > 10:
+                return {"success": False, "message": f"硬币总数超过限制，当前拥有{total_coins}个硬币，最多只能拥有10个。请先退回多余的硬币。"}
+            
             # 切换到下一个玩家
             self.next_player()
+            
+            # 重置回合状态为新回合
+            next_player = self.get_current_player()
+            self.game_state["turn_state"] = {
+                "main_action_done": False,
+                "upgrade_action_done": False,
+                "current_player_id": next_player.user_id if next_player else None
+            }
             
             # 增加回合计数
             self.game_state["turn_count"] += 1
@@ -1046,7 +1232,6 @@ class PokemonGame(BaseGame):
             }
             
             # 获取下一个玩家信息
-            next_player = self.get_current_player()
             next_player_name = next_player.username if next_player else "未知玩家"
             
             return {
