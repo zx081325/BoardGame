@@ -570,5 +570,4 @@ if __name__ == "__main__":
         exit(1)
     
     import uvicorn
-    # 使用 "::" 来同时支持IPv4和IPv6
-    uvicorn.run(app, host="::", port=50000)
+    uvicorn.run(app, host=["::", "0.0.0.0"], port=50000)
