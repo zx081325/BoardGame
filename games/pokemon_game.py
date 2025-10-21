@@ -1089,14 +1089,39 @@ class PokemonGame(BaseGame):
             if self.game_state["turn_state"]["upgrade_action_done"]:
                 return {"success": False, "message": "本回合已完成升级操作，无法再次升级"}
             
-            # TODO: 实现具体的升级逻辑
-            # 这里暂时返回成功，等待后续实现具体逻辑
+            # 获取升级参数
+            source_card_id = action_data.get("source_card_id")
+            target_card_id = action_data.get("target_card_id")
+            
+            if not source_card_id or not target_card_id:
+                return {"success": False, "message": "必须指定要升级的卡牌ID和目标卡牌ID"}
+            
+            # 验证升级条件
+            validation_result = self._validate_upgrade(player_id, source_card_id, target_card_id)
+            if not validation_result["valid"]:
+                return {"success": False, "message": validation_result["message"]}
+            
+            source_card = validation_result["source_card"]
+            target_card = validation_result["target_card"]
+            target_location = validation_result["target_location"]
+            
+            # 计算升级成本
+            cost_result = self._calculate_upgrade_cost(player_id, source_card)
+            if not cost_result["valid"]:
+                return {"success": False, "message": cost_result["message"]}
+            
+            # 执行升级
+            upgrade_result = self._execute_upgrade(player_id, source_card, target_card, target_location)
+            if not upgrade_result["success"]:
+                return upgrade_result
             
             # 记录操作
             self.game_state["last_action"] = {
                 "player_id": player_id,
                 "action": "upgrade_card",
-                "data": action_data
+                "source_card": source_card["name"],
+                "target_card": target_card["name"],
+                "score_gained": upgrade_result["score_gained"]
             }
             
             # 更新回合状态 - 标记升级操作已完成
@@ -1104,18 +1129,143 @@ class PokemonGame(BaseGame):
             
             return {
                 "success": True,
-                "message": "升级操作已记录（逻辑待实现）"
+                "message": f"成功将{source_card['name']}升级为{target_card['name']}，获得{upgrade_result['score_gained']}分",
+                "score_gained": upgrade_result["score_gained"]
             }
             
         except Exception as e:
             return {"success": False, "message": f"处理升级操作时出错: {e}"}
+    
+    def _validate_upgrade(self, player_id: str, source_card_id: int, target_card_id: int) -> Dict:
+        """验证升级条件"""
+        player_data = self.game_state["player_data"][player_id]
+        
+        # 1. 检查源卡牌是否属于玩家（不包括预购区）
+        source_card = None
+        for card in player_data["cards"]:
+            if card["id"] == source_card_id:
+                source_card = card
+                break
+        
+        if not source_card:
+            return {"valid": False, "message": "指定的源卡牌不在您的卡牌中"}
+        
+        # 2. 检查源卡牌是否可以升级
+        if not source_card.get("can_evolve", 0):
+            return {"valid": False, "message": f"{source_card['name']}无法升级"}
+        
+        evolve_to_ids = source_card.get("evolve_to_ids", [])
+        if not evolve_to_ids:
+            return {"valid": False, "message": f"{source_card['name']}没有可升级的目标"}
+        
+        # 3. 检查目标卡牌是否在可升级列表中
+        if target_card_id not in evolve_to_ids:
+            return {"valid": False, "message": f"目标卡牌不在{source_card['name']}的可升级列表中"}
+        
+        # 4. 检查目标卡牌是否在展示区
+        target_card = None
+        target_location = None
+        display_cards = self.game_state["public_info"]["display_cards"]
+        
+        for deck_type, cards in display_cards.items():
+            for card in cards:
+                if card["id"] == target_card_id:
+                    target_card = card
+                    target_location = {"deck_type": deck_type, "card": card}
+                    break
+            if target_card:
+                break
+        
+        if not target_card:
+            return {"valid": False, "message": "目标卡牌不在展示区中"}
+        
+        return {
+            "valid": True,
+            "source_card": source_card,
+            "target_card": target_card,
+            "target_location": target_location
+        }
+    
+    def _calculate_upgrade_cost(self, player_id: str, source_card: Dict) -> Dict:
+        """计算升级成本并验证是否可以支付"""
+        evolve_color_code = source_card.get("evolve_color_code")
+        evolve_cost = source_card.get("evolve_cost", 0)
+        
+        if not evolve_color_code or evolve_cost <= 0:
+            return {"valid": False, "message": "卡牌升级配置错误"}
+        
+        # 颜色代码映射
+        color_map = {1: "red", 2: "pink", 3: "blue", 4: "yellow", 5: "black"}
+        required_color = color_map.get(evolve_color_code)
+        
+        if not required_color:
+            return {"valid": False, "message": f"无效的升级颜色代码: {evolve_color_code}"}
+        
+        # 计算玩家可用的该颜色金币（来自卡牌的抵押价值）
+        player_data = self.game_state["player_data"][player_id]
+        available_discounts = self._calculate_card_discounts(player_id)
+        available_color_coins = available_discounts.get(required_color, 0)
+        
+        if available_color_coins < evolve_cost:
+            return {
+                "valid": False, 
+                "message": f"升级需要{evolve_cost}个{required_color}色抵押金币，但您只有{available_color_coins}个"
+            }
+        
+        return {
+            "valid": True,
+            "required_color": required_color,
+            "required_amount": evolve_cost,
+            "available_amount": available_color_coins
+        }
+    
+    def _execute_upgrade(self, player_id: str, source_card: Dict, target_card: Dict, target_location: Dict) -> Dict:
+        """执行升级操作"""
+        try:
+            player_data = self.game_state["player_data"][player_id]
+            
+            # 1. 从玩家卡牌中移除源卡牌
+            player_data["cards"] = [card for card in player_data["cards"] if card["id"] != source_card["id"]]
+            
+            # 2. 将目标卡牌添加到玩家卡牌中
+            player_data["cards"].append(target_card)
+            
+            # 3. 将源卡牌放回展示区（替换目标卡牌的位置）
+            deck_type = target_location["deck_type"]
+            display_cards = self.game_state["public_info"]["display_cards"][deck_type]
+            
+            # 找到目标卡牌在展示区的位置并替换
+            for i, card in enumerate(display_cards):
+                if card["id"] == target_card["id"]:
+                    display_cards[i] = source_card
+                    break
+            
+            # 4. 从牌库补充一张新卡牌到展示区
+            self._refill_display_card(deck_type)
+            
+            # 5. 计算得分差异
+            source_points = source_card.get("points", 0)
+            target_points = target_card.get("points", 0)
+            score_gained = target_points - source_points
+            
+            # 6. 更新玩家得分（如果游戏状态中有得分系统）
+            if "score" in player_data:
+                player_data["score"] += score_gained
+            
+            return {
+                "success": True,
+                "score_gained": score_gained
+            }
+            
+        except Exception as e:
+            return {"success": False, "message": f"执行升级时出错: {e}"}
     
     def next_player(self):
         """切换到下一个玩家"""
         self.current_player_index = (self.current_player_index + 1) % len(self.players)
     
     def _handle_return_coins(self, player_id: str, action_data: Dict) -> Dict:
-        """处理退回金币操作 - 玩家手动选择退回硬币，必须退回到恰好10个"""
+        """处理退回金币操作 - 玩家手动指定退回硬币，必须退回到恰好10个"""
         try:
             # 检查游戏状态
             if self.status != GameStatus.PLAYING:
