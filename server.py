@@ -7,6 +7,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depe
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Dict, List, Optional, Set
 from dataclasses import dataclass
@@ -25,6 +26,15 @@ from game_manager import game_manager
 
 app = FastAPI()
 security = HTTPBearer()
+
+# 添加CORS中间件
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # 允许所有来源
+    allow_credentials=True,
+    allow_methods=["*"],  # 允许所有HTTP方法
+    allow_headers=["*"],  # 允许所有请求头
+)
 
 # 挂载静态文件目录
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -560,4 +570,5 @@ if __name__ == "__main__":
         exit(1)
     
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8080)
+    # 使用 "::" 来同时支持IPv4和IPv6
+    uvicorn.run(app, host="::", port=50000)
