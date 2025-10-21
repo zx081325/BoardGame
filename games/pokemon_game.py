@@ -84,17 +84,17 @@ class PokemonGame(BaseGame):
         # 创建卡牌堆状态
         card_decks = {
             "level_1": {
-                "name": "等级1牌堆",
+                "name": "低级牌堆",
                 "cards": level_cards["level_1"],
                 "count": len(level_cards["level_1"])
             },
             "level_2": {
-                "name": "等级2牌堆", 
+                "name": "中级牌堆", 
                 "cards": level_cards["level_2"],
                 "count": len(level_cards["level_2"])
             },
             "level_3": {
-                "name": "等级3牌堆",
+                "name": "高级牌堆",
                 "cards": level_cards["level_3"],
                 "count": len(level_cards["level_3"])
             },
@@ -104,7 +104,7 @@ class PokemonGame(BaseGame):
                 "count": len(level_cards["rare"])
             },
             "phantom": {
-                "name": "梦幻牌堆",
+                "name": "传说牌堆",
                 "cards": level_cards["phantom"],
                 "count": len(level_cards["phantom"])
             }
@@ -323,94 +323,7 @@ class PokemonGame(BaseGame):
             "special_locations": [],  # 特殊位置
             "items": {}  # 道具位置
         }
-    
-    def make_move(self, player_id: str, move_data: Dict) -> MoveResult:
-        """执行宝可梦游戏移动"""
-        # 验证游戏状态
-        if self.status != GameStatus.PLAYING:
-            return MoveResult(False, "游戏未开始或已结束")
-        
-        # 验证是否轮到该玩家
-        current_player = self.get_current_player()
-        if not current_player or current_player.user_id != player_id:
-            return MoveResult(False, "不是你的回合")
-        
-        # 验证移动数据
-        if not self.is_valid_move(player_id, move_data):
-            return MoveResult(False, "无效的移动")
-        
-        # 执行移动
-        action_type = move_data.get("action", "")
-        success = self._execute_action(player_id, action_type, move_data)
-        
-        if not success:
-            return MoveResult(False, "移动执行失败")
-        
-        # 更新游戏状态
-        self.game_state["turn_count"] += 1
-        self.game_state["last_action"] = {
-            "player_id": player_id,
-            "action": action_type,
-            "data": move_data,
-            "timestamp": datetime.now().isoformat()
-        }
-        self.game_state["action_history"].append(self.game_state["last_action"])
-        
-        # 检查游戏是否结束
-        winner = self._check_winner()
-        is_draw = self._check_draw()
-        
-        if winner or is_draw:
-            self.status = GameStatus.FINISHED
-            self.game_state["current_phase"] = "finished"
-            self.game_state["winner"] = winner
-            self.game_state["is_draw"] = is_draw
-            
-            return MoveResult(
-                success=True,
-                game_state=self.game_state,
-                game_finished=True,
-                winner=winner,
-                is_draw=is_draw
-            )
-        
-        # 切换到下一个玩家
-        self.next_player()
-        
-        return MoveResult(
-            success=True,
-            game_state=self.game_state,
-            game_finished=False
-        )
-    
-    def is_valid_move(self, player_id: str, move_data: Dict) -> bool:
-        """验证移动是否有效"""
-        if not move_data:
-            return False
-        
-        action = move_data.get("action", "")
-        if not action:
-            return False
-        
-        # 基础动作验证
-        valid_actions = ["move", "attack", "use_item", "pass", "special"]
-        if action not in valid_actions:
-            return False
-        
-        # 根据不同动作类型进行具体验证
-        if action == "move":
-            return self._validate_move_action(player_id, move_data)
-        elif action == "attack":
-            return self._validate_attack_action(player_id, move_data)
-        elif action == "use_item":
-            return self._validate_item_action(player_id, move_data)
-        elif action == "pass":
-            return True  # 跳过回合总是有效的
-        elif action == "special":
-            return self._validate_special_action(player_id, move_data)
-        
-        return False
-    
+
     def handle_game_action(self, player_id: str, action: str, action_data: Dict) -> Optional[Dict]:
         """处理宝可梦游戏特定操作"""
         if action == "take_coins":
@@ -419,6 +332,8 @@ class PokemonGame(BaseGame):
             return self._handle_reserve_card(player_id, action_data)
         elif action == "buy_card":
             return self._handle_buy_card(player_id, action_data)
+        elif action == "end_turn":
+            return self._handle_end_turn(player_id, action_data)
         else:
             return {"success": False, "message": f"不支持的操作: {action}"}
     
@@ -474,10 +389,6 @@ class PokemonGame(BaseGame):
         player_coins = self.game_state["player_data"][player_id]["coins"]
         for color, count in coins_to_take.items():
             player_coins[color] += count
-        
-        # 切换到下一个玩家
-        self.current_player_index = (current_player_index + 1) % len(self.players)
-        self.game_state["turn_count"] += 1
         
         # 记录操作
         self.game_state["last_action"] = {
@@ -559,24 +470,6 @@ class PokemonGame(BaseGame):
         else:
             return {"valid": False, "message": "硬币拿取规则：可拿取3个不同颜色硬币、2个同色硬币（该色>4个）、2个不同色硬币（只剩2色时）或1个硬币（只剩1色且<4个）"}
     
-    def _execute_action(self, player_id: str, action_type: str, move_data: Dict) -> bool:
-        """执行具体的游戏动作"""
-        try:
-            if action_type == "move":
-                return self._execute_move(player_id, move_data)
-            elif action_type == "attack":
-                return self._execute_attack(player_id, move_data)
-            elif action_type == "use_item":
-                return self._execute_use_item(player_id, move_data)
-            elif action_type == "pass":
-                return True  # 跳过回合
-            elif action_type == "special":
-                return self._execute_special(player_id, move_data)
-            
-            return False
-        except Exception as e:
-            print(f"执行动作时出错: {e}")
-            return False
     
     def _check_winner(self) -> Optional[str]:
         """检查是否有获胜者"""
@@ -598,7 +491,6 @@ class PokemonGame(BaseGame):
         
         return None
     
-    
     def get_game_rules(self) -> Dict:
         """获取游戏规则说明"""
         return {
@@ -608,10 +500,15 @@ class PokemonGame(BaseGame):
             "rules": [
                 "游戏支持4名玩家同时进行",
                 "玩家轮流进行行动, 先得到20分的玩家获胜",
+                "稀有与传说卡牌不允许预购",
+                "拿取硬币、预购卡牌、购买卡牌等操作不会自动结束回合",
+                "需要手动调用结束回合接口才会切换到下一个玩家"
             ],
             "actions": [
                 "take_coins - 拿取硬币",
-                "reserve_card - 预购卡牌"
+                "reserve_card - 预购卡牌",
+                "buy_card - 购买卡牌",
+                "end_turn - 结束回合"
             ]
         }
     
@@ -685,9 +582,9 @@ class PokemonGame(BaseGame):
             if not target_card:
                 return {"success": False, "message": "未找到指定的卡牌"}
             
-            # 检查是否为梦幻或传说卡牌（不能预购）
-            if target_card.get("level") in ["梦幻", "传说"]:
-                return {"success": False, "message": "不能预购梦幻或传说卡牌"}
+            # 稀有与传说卡牌不允许预购；同时禁止稀有/梦幻牌堆的展示卡
+            if target_card.get("level") in ["稀有", "传说"] or target_deck_type in ["rare", "phantom"]:
+                return {"success": False, "message": "不能预购稀有或传说卡牌"}
             
             # 执行预购
             # 1. 从展示区移除卡牌
@@ -708,11 +605,7 @@ class PokemonGame(BaseGame):
             player_data["coins"]["purple"] += 1
             self.game_state["public_info"]["coins"]["purple"] -= 1
             
-            # 5. 切换到下一个玩家
-            self.next_player()
-            self.game_state["turn_count"] += 1
-            
-            # 记录操作
+            # 记录操作（不暴露卡牌信息）
             self.game_state["last_action"] = {
                 "player_id": player_id,
                 "action": "reserve_display_card",
@@ -730,10 +623,10 @@ class PokemonGame(BaseGame):
     def _reserve_deck_top_card(self, player_id: str, deck_type: str) -> Dict:
         """预购牌堆顶部的卡牌"""
         try:
-            # 检查牌堆类型是否有效
-            valid_deck_types = ["level_1", "level_2", "level_3", "rare"]
+            # 检查牌堆类型是否有效（稀有与梦幻牌堆不允许预购）
+            valid_deck_types = ["level_1", "level_2", "level_3"]
             if deck_type not in valid_deck_types:
-                return {"success": False, "message": "无效的牌堆类型"}
+                return {"success": False, "message": "无效的牌堆类型或该牌堆不允许预购"}
             
             # 检查牌堆是否还有卡牌
             card_decks = self.game_state["private_data"]["card_decks"]
@@ -744,9 +637,9 @@ class PokemonGame(BaseGame):
             # 获取牌堆顶部卡牌
             top_card = deck["cards"][0]
             
-            # 检查是否为梦幻或传说卡牌（不能预购）
-            if top_card.get("level") in ["梦幻", "传说"]:
-                return {"success": False, "message": "不能预购梦幻或传说卡牌"}
+            # 稀有与传说卡牌不允许预购
+            if top_card.get("level") in ["稀有", "传说"]:
+                return {"success": False, "message": "不能预购稀有或传说卡牌"}
             
             # 执行预购
             # 1. 从牌堆移除顶部卡牌
@@ -765,10 +658,6 @@ class PokemonGame(BaseGame):
             # 3. 给玩家一个紫色硬币
             player_data["coins"]["purple"] += 1
             self.game_state["public_info"]["coins"]["purple"] -= 1
-            
-            # 4. 切换到下一个玩家
-            self.next_player()
-            self.game_state["turn_count"] += 1
             
             # 记录操作（不暴露卡牌信息）
             self.game_state["last_action"] = {
@@ -914,10 +803,6 @@ class PokemonGame(BaseGame):
             player_data = self.game_state["player_data"][player_id]
             player_data["cards"].append(target_card)
             
-            # 切换到下一个玩家
-            self.next_player()
-            self.game_state["turn_count"] += 1
-            
             # 记录操作
             self.game_state["last_action"] = {
                 "player_id": player_id,
@@ -964,10 +849,6 @@ class PokemonGame(BaseGame):
             
             # 将卡牌添加到玩家手牌
             player_data["cards"].append(target_card)
-            
-            # 切换到下一个玩家
-            self.next_player()
-            self.game_state["turn_count"] += 1
             
             # 记录操作
             self.game_state["last_action"] = {
@@ -1138,3 +1019,43 @@ class PokemonGame(BaseGame):
     def next_player(self):
         """切换到下一个玩家"""
         self.current_player_index = (self.current_player_index + 1) % len(self.players)
+    
+    def _handle_end_turn(self, player_id: str, action_data: Dict) -> Dict:
+        """处理结束回合操作"""
+        try:
+            # 检查游戏状态
+            if self.status != GameStatus.PLAYING:
+                return {"success": False, "message": "游戏未开始"}
+            
+            # 检查是否是当前玩家的回合
+            current_player = self.get_current_player()
+            if not current_player or current_player.user_id != player_id:
+                return {"success": False, "message": "不是你的回合"}
+            
+            # 切换到下一个玩家
+            self.next_player()
+            
+            # 增加回合计数
+            self.game_state["turn_count"] += 1
+            
+            # 记录操作
+            self.game_state["last_action"] = {
+                "player_id": player_id,
+                "action": "end_turn",
+                "turn_count": self.game_state["turn_count"]
+            }
+            
+            # 获取下一个玩家信息
+            next_player = self.get_current_player()
+            next_player_name = next_player.username if next_player else "未知玩家"
+            
+            return {
+                "success": True,
+                "message": f"回合结束，轮到 {next_player_name} 行动",
+                "next_player_id": next_player.user_id if next_player else None,
+                "turn_count": self.game_state["turn_count"]
+            }
+            
+        except Exception as e:
+            return {"success": False, "message": f"结束回合时出错: {e}"}
+    

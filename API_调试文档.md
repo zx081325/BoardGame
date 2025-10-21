@@ -537,6 +537,51 @@ Authorization: Bearer {session_token}
 - 从展示区预购的卡牌：`visible_to_all: true`，所有玩家都能看到完整卡牌信息
 - 从牌堆顶部预购的卡牌：`visible_to_all: false`，只有预购者能看到完整信息，其他玩家只能看到"隐藏卡牌"占位符
 
+### 3. 结束回合操作
+**客户端发送**:
+```json
+{
+  "action": "game_action",
+  "game_action": "end_turn",
+  "action_data": {}
+}
+```
+
+**成功响应**:
+```json
+{
+  "type": "game_action_result",
+  "success": true,
+  "message": "回合结束，轮到 玩家名 行动",
+  "room_updated": {
+    "current_player": "user_456",
+    "game_state": {
+      "turn_count": 2,
+      "last_action": {
+        "player_id": "user_123",
+        "action": "end_turn",
+        "turn_count": 2
+      }
+    }
+  }
+}
+```
+
+**失败响应**:
+```json
+{
+  "type": "game_action_result",
+  "success": false,
+  "message": "不是你的回合"
+}
+```
+
+#### 回合结束规则
+- 只有当前回合的玩家才能结束回合
+- 结束回合后会自动切换到下一个玩家
+- 回合计数会自动增加
+- 拿取硬币、预购卡牌、购买卡牌等操作不会自动结束回合，需要手动调用结束回合接口
+
 ### 4. 硬币拿取规则
 
 #### 规则1: 拿取3个不同颜色的硬币

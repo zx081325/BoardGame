@@ -43,7 +43,11 @@ class GameClient {
         });
         
         // 宝可梦游戏拿取硬币按钮
-        document.getElementById('takeCoinsButton').addEventListener('click', () => this.takeCoins());
+        // 为硬币池中的硬币添加点击事件监听器
+            this.initializeCoinPoolClickListeners();
+            
+            // 确定拿取硬币按钮
+            document.getElementById('confirmCoinsButton').addEventListener('click', () => this.confirmCoinSelection());
         
         // 预购牌堆顶部按钮事件委托
         document.addEventListener('click', (e) => {
@@ -95,7 +99,35 @@ class GameClient {
             if (e.key === 'Enter') this.handleRegister();
         });
     }
-    
+
+    initializeCoinPoolClickListeners() {
+        // 初始化选择的硬币数据
+        this.selectedCoins = {
+            red: 0,
+            pink: 0,
+            blue: 0,
+            yellow: 0,
+            black: 0
+        };
+        
+        // 为每种颜色的硬币添加点击事件监听器
+        const coinColors = ['red', 'pink', 'blue', 'yellow', 'black'];
+        
+        coinColors.forEach(color => {
+            const coinElement = document.querySelector(`.coin-item .coin-color.${color}`);
+            if (coinElement) {
+                coinElement.style.cursor = 'pointer';
+                coinElement.addEventListener('click', () => this.selectCoinFromPool(color));
+            }
+            
+            // 为选择区域的硬币添加点击事件监听器
+            const selectedCoinElement = document.querySelector(`.selected-coin-item[data-color="${color}"] .coin-color`);
+            if (selectedCoinElement) {
+                selectedCoinElement.addEventListener('click', () => this.returnCoinToPool(color));
+            }
+        });
+    }
+
     checkStoredSession() {
         const storedToken = localStorage.getItem('sessionToken');
         const storedUser = localStorage.getItem('currentUser');
@@ -514,12 +546,118 @@ class GameClient {
         this.clearCoinSelection();
     }
     
+    selectCoinFromPool(color) {
+        if (!this.currentRoom || this.currentRoom.game_type !== 'pokemon_game') {
+            this.showMessage('只能在宝可梦游戏中拿取硬币', 'error');
+            return;
+        }
+
+        // 检查硬币池中是否有该颜色的硬币
+        const coinCountElement = document.getElementById(`public${color.charAt(0).toUpperCase() + color.slice(1)}Coins`);
+        const availableCoins = parseInt(coinCountElement.textContent) || 0;
+        
+        if (availableCoins <= 0) {
+            this.showMessage(`硬币池中没有${this.getCoinColorName(color)}硬币`, 'error');
+            return;
+        }
+
+        // 检查是否已经选择了太多硬币（最多3个）
+        const totalSelected = Object.values(this.selectedCoins).reduce((sum, count) => sum + count, 0);
+        if (totalSelected >= 3) {
+            this.showMessage('最多只能选择3个硬币', 'error');
+            return;
+        }
+
+        // 增加选择的硬币数量
+        this.selectedCoins[color]++;
+        this.updateSelectedCoinsDisplay();
+    }
+
+    returnCoinToPool(color) {
+        if (this.selectedCoins[color] > 0) {
+            this.selectedCoins[color]--;
+            this.updateSelectedCoinsDisplay();
+        }
+    }
+
+    updateSelectedCoinsDisplay() {
+        const coinColors = ['red', 'pink', 'blue', 'yellow', 'black'];
+        
+        coinColors.forEach(color => {
+            const selectedItem = document.querySelector(`.selected-coin-item[data-color="${color}"]`);
+            const countElement = selectedItem.querySelector('.selected-coin-count');
+            
+            if (this.selectedCoins[color] > 0) {
+                selectedItem.style.display = 'flex';
+                countElement.textContent = this.selectedCoins[color];
+            } else {
+                selectedItem.style.display = 'none';
+            }
+        });
+
+        // 更新确定按钮状态
+        const totalSelected = Object.values(this.selectedCoins).reduce((sum, count) => sum + count, 0);
+        const confirmButton = document.getElementById('confirmCoinsButton');
+        confirmButton.disabled = totalSelected === 0;
+    }
+
+    getCoinColorName(color) {
+        const colorNames = {
+            'red': '红色',
+            'pink': '粉色',
+            'blue': '蓝色',
+            'yellow': '黄色',
+            'black': '黑色'
+        };
+        return colorNames[color] || color;
+    }
+
+    confirmCoinSelection() {
+        if (!this.currentRoom || this.currentRoom.game_type !== 'pokemon_game') {
+            this.showMessage('只能在宝可梦游戏中拿取硬币', 'error');
+            return;
+        }
+
+        // 检查是否有选择的硬币
+        const totalSelected = Object.values(this.selectedCoins).reduce((sum, count) => sum + count, 0);
+        if (totalSelected === 0) {
+            this.showMessage('请先选择要拿取的硬币', 'error');
+            return;
+        }
+
+        // 过滤掉数量为0的硬币
+        const filteredCoins = {};
+        for (const [color, count] of Object.entries(this.selectedCoins)) {
+            if (count > 0) {
+                filteredCoins[color] = count;
+            }
+        }
+
+        // 发送拿取硬币请求
+        this.sendMessage({
+            action: "game_action",
+            game_action: "take_coins",
+            action_data: {
+                coins: filteredCoins
+            }
+        });
+
+        // 清空选择
+        this.clearCoinSelection();
+    }
+
     clearCoinSelection() {
-        document.getElementById('selectRed').value = '0';
-        document.getElementById('selectPink').value = '0';
-        document.getElementById('selectBlue').value = '0';
-        document.getElementById('selectYellow').value = '0';
-        document.getElementById('selectBlack').value = '0';
+        // 重置选择的硬币数据
+        this.selectedCoins = {
+            red: 0,
+            pink: 0,
+            blue: 0,
+            yellow: 0,
+            black: 0
+        };
+        
+        // 更新显示
+        this.updateSelectedCoinsDisplay();
     }
     
     reserveDisplayCard(cardId) {
@@ -542,6 +680,13 @@ class GameClient {
     reserveDeckTopCard(deckType) {
         if (!this.currentRoom || this.currentRoom.game_type !== 'pokemon_game') {
             this.showMessage('只能在宝可梦游戏中预购卡牌', 'error');
+            return;
+        }
+        
+        // 只允许等级1-3卡牌预购
+        const allowedDecks = ['level_1', 'level_2', 'level_3'];
+        if (!allowedDecks.includes(deckType)) {
+            this.showMessage('只能预购等级1-3的卡牌', 'error');
             return;
         }
         
@@ -764,17 +909,29 @@ class GameClient {
         this.updateGameStatus();
         
         // 根据游戏类型显示不同的游戏界面
+        const gameStatusElement = document.querySelector('.game-status');
+        const playersInfoElement = document.querySelector('.players-info');
+        
         if (this.currentRoom.game_type === 'tic_tac_toe' || this.currentRoom.game_type === 'reverse_tic_tac_toe') {
             document.getElementById('ticTacToeBoard').style.display = 'block';
             document.getElementById('pokemonGameBoard').style.display = 'none';
+            // 显示game-status和players-info元素
+            if (gameStatusElement) gameStatusElement.style.display = 'block';
+            if (playersInfoElement) playersInfoElement.style.display = 'flex';
             this.updateTicTacToeBoard();
         } else if (this.currentRoom.game_type === 'pokemon_game') {
             document.getElementById('ticTacToeBoard').style.display = 'none';
             document.getElementById('pokemonGameBoard').style.display = 'block';
+            // 隐藏game-status和players-info元素
+            if (gameStatusElement) gameStatusElement.style.display = 'none';
+            if (playersInfoElement) playersInfoElement.style.display = 'none';
             this.updatePokemonGameBoard();
         } else {
             document.getElementById('ticTacToeBoard').style.display = 'none';
             document.getElementById('pokemonGameBoard').style.display = 'none';
+            // 显示game-status和players-info元素
+            if (gameStatusElement) gameStatusElement.style.display = 'block';
+            if (playersInfoElement) playersInfoElement.style.display = 'flex';
         }
     }
     
@@ -892,13 +1049,22 @@ class GameClient {
             document.getElementById('publicPurpleCoins').textContent = publicInfo.coins.purple || 0;
         }
         
-        // 更新牌堆数量
+        // 更新牌堆数量（在level-header的h4标题后面显示）
         if (publicInfo && publicInfo.deck_counts) {
-            document.getElementById('level1Count').textContent = publicInfo.deck_counts.level_1 || 0;
-            document.getElementById('level2Count').textContent = publicInfo.deck_counts.level_2 || 0;
-            document.getElementById('level3Count').textContent = publicInfo.deck_counts.level_3 || 0;
-            document.getElementById('rareCount').textContent = publicInfo.deck_counts.rare || 0;
-            document.getElementById('phantomCount').textContent = publicInfo.deck_counts.phantom || 0;
+            const deckMappings = [
+                { selector: '.card-level-row:nth-child(1) .level-header h4', count: publicInfo.deck_counts.level_1 || 0, name: '等级1卡牌' },
+                { selector: '.card-level-row:nth-child(2) .level-header h4', count: publicInfo.deck_counts.level_2 || 0, name: '等级2卡牌' },
+                { selector: '.card-level-row:nth-child(3) .level-header h4', count: publicInfo.deck_counts.level_3 || 0, name: '等级3卡牌' },
+                { selector: '.rare-cards-section .level-header h4', count: publicInfo.deck_counts.rare || 0, name: '稀有卡牌' },
+                { selector: '.phantom-cards-section .level-header h4', count: publicInfo.deck_counts.phantom || 0, name: '幻影卡牌' }
+            ];
+            
+            deckMappings.forEach(mapping => {
+                const headerElement = document.querySelector(mapping.selector);
+                if (headerElement) {
+                    headerElement.textContent = `${mapping.name} (${mapping.count})`;
+                }
+            });
         }
         
         // 更新展示卡牌
@@ -907,14 +1073,7 @@ class GameClient {
         // 更新玩家硬币和预购区域
         this.updatePlayersInfo(playerData);
         
-        // 更新硬币选择器的最大值
-        if (publicInfo && publicInfo.coins) {
-            document.getElementById('selectRed').max = publicInfo.coins.red || 0;
-            document.getElementById('selectPink').max = publicInfo.coins.pink || 0;
-            document.getElementById('selectBlue').max = publicInfo.coins.blue || 0;
-            document.getElementById('selectYellow').max = publicInfo.coins.yellow || 0;
-            document.getElementById('selectBlack').max = publicInfo.coins.black || 0;
-        }
+        // 硬币选择器已移除，不再需要更新最大值
         
         // 更新按钮状态
         this.updateActionButtons();
@@ -927,7 +1086,8 @@ class GameClient {
             'level_1': 'level1DisplayCards',
             'level_2': 'level2DisplayCards', 
             'level_3': 'level3DisplayCards',
-            'rare': 'rareDisplayCards'
+            'rare': 'rareDisplayCards',
+            'phantom': 'phantomDisplayCards'
         };
         
         const isCurrentPlayerTurn = this.currentRoom.current_player === this.getCurrentPlayerId();
@@ -974,7 +1134,15 @@ class GameClient {
         
         // 更新预购牌堆顶部按钮状态
         document.querySelectorAll('.reserve-deck-button').forEach(button => {
-            button.disabled = !canReserve;
+            const deckType = button.dataset.deck;
+            // 只允许等级1-3卡牌预购，禁用稀有和幻影卡牌预购
+            const allowedDecks = ['level_1', 'level_2', 'level_3'];
+            if (allowedDecks.includes(deckType)) {
+                button.disabled = !canReserve;
+            } else {
+                button.disabled = true;
+                button.style.display = 'none'; // 隐藏稀有和幻影卡牌的预购按钮
+            }
         });
     }
     
@@ -1238,19 +1406,31 @@ class GameClient {
     
     hideGameContent() {
         // 清空展示卡牌
-        ['level1DisplayCards', 'level2DisplayCards', 'level3DisplayCards', 'rareDisplayCards'].forEach(id => {
+        ['level1DisplayCards', 'level2DisplayCards', 'level3DisplayCards', 'rareDisplayCards', 'phantomDisplayCards'].forEach(id => {
             const container = document.getElementById(id);
             if (container) container.innerHTML = '';
         });
         
-        // 清空玩家信息
-        ['p1ReservedCards', 'p2ReservedCards', 'p1OwnedCards', 'p2OwnedCards'].forEach(id => {
+        // 清空玩家信息 - 更新为4个玩家
+        ['p1ReservedCards', 'p2ReservedCards', 'p3ReservedCards', 'p4ReservedCards', 
+         'p1OwnedCards', 'p2OwnedCards', 'p3OwnedCards', 'p4OwnedCards'].forEach(id => {
             const container = document.getElementById(id);
             if (container) container.innerHTML = '';
         });
         
-        // 重置计数器
-        ['p1OwnedCount', 'p2OwnedCount', 'p1Points', 'p2Points'].forEach(id => {
+        // 重置计数器 - 更新为4个玩家
+        ['p1OwnedCount', 'p2OwnedCount', 'p3OwnedCount', 'p4OwnedCount',
+         'p1Points', 'p2Points', 'p3Points', 'p4Points',
+         'p1ReservedCount', 'p2ReservedCount', 'p3ReservedCount', 'p4ReservedCount'].forEach(id => {
+            const element = document.getElementById(id);
+            if (element) element.textContent = '0';
+        });
+        
+        // 重置玩家硬币显示 - 更新为4个玩家
+        ['p1RedCoins', 'p1PinkCoins', 'p1BlueCoins', 'p1YellowCoins', 'p1BlackCoins', 'p1PurpleCoins',
+         'p2RedCoins', 'p2PinkCoins', 'p2BlueCoins', 'p2YellowCoins', 'p2BlackCoins', 'p2PurpleCoins',
+         'p3RedCoins', 'p3PinkCoins', 'p3BlueCoins', 'p3YellowCoins', 'p3BlackCoins', 'p3PurpleCoins',
+         'p4RedCoins', 'p4PinkCoins', 'p4BlueCoins', 'p4YellowCoins', 'p4BlackCoins', 'p4PurpleCoins'].forEach(id => {
             const element = document.getElementById(id);
             if (element) element.textContent = '0';
         });
@@ -1261,10 +1441,20 @@ class GameClient {
             if (element) element.textContent = '0';
         });
         
-        // 重置牌堆计数
-        ['level1Count', 'level2Count', 'level3Count', 'rareCount', 'phantomCount'].forEach(id => {
-            const element = document.getElementById(id);
-            if (element) element.textContent = '0';
+        // 重置level-header标题
+        const headerMappings = [
+            { selector: '.card-level-row:nth-child(1) .level-header h4', name: '等级1卡牌' },
+            { selector: '.card-level-row:nth-child(2) .level-header h4', name: '等级2卡牌' },
+            { selector: '.card-level-row:nth-child(3) .level-header h4', name: '等级3卡牌' },
+            { selector: '.rare-cards-section .level-header h4', name: '稀有卡牌' },
+            { selector: '.phantom-cards-section .level-header h4', name: '幻影卡牌' }
+        ];
+        
+        headerMappings.forEach(mapping => {
+            const headerElement = document.querySelector(mapping.selector);
+            if (headerElement) {
+                headerElement.textContent = mapping.name;
+            }
         });
     }
 
